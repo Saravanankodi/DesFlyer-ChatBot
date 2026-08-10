@@ -73,8 +73,8 @@ if not os.path.exists(VECTOR_DB_PATH):
     # -----------------------------
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100
+        chunk_size=300,
+        chunk_overlap=50
     )
 
     chunks = text_splitter.split_documents(documents)
@@ -131,9 +131,11 @@ else:
         persist_directory=VECTOR_DB_PATH,
         embedding_function=embedding_model
     )
+
     print("Stored documents:", vector_db._collection.count())
+
     print("Existing vector database loaded successfully!")
-    
+
 
 # -----------------------------
 # Create Retriever
@@ -141,21 +143,38 @@ else:
 
 retriever = vector_db.as_retriever(
     search_type="similarity",
-    search_kwargs={"k": 3}
+    search_kwargs={"k": 4}
 )
 
 print("Retriever created successfully.")
-# CHECK RETRIEVAL HERE
 
-query = "What services does DesFlyer provide?"
 
-retrieved_docs = retriever.invoke(query)
+# -----------------------------
+# Retrieval Test
+# -----------------------------
 
-print("Retrieved documents:", len(retrieved_docs))
+test_questions = [
+    "What services does DesFlyer offer?",
+    "Does DesFlyer develop websites?",
+    "Does DesFlyer develop mobile applications?"
+]
 
-for i, doc in enumerate(retrieved_docs, start=1):
-    print(f"\n------ Chunk {i} ------")
-    print(doc.page_content[:500])
+for question in test_questions:
+
+    print("\n====================================")
+    print("QUESTION:", question)
+    print("====================================")
+
+    docs = retriever.invoke(question)
+
+    print("Number of documents retrieved:", len(docs))
+
+    for i, doc in enumerate(docs):
+
+        print(f"\n--- Document {i + 1} ---")
+
+        print(doc.page_content[:1000])
+
 
 # -----------------------------
 # Prompt Template
@@ -164,16 +183,22 @@ for i, doc in enumerate(retrieved_docs, start=1):
 prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are the official DesFlyer chatbot.
+You are a DesFlyer FAQ chatbot.
 
-Answer ONLY using the given context.
+Answer the question using ONLY the context below.
 
 Rules:
-1. Answer only DesFlyer-related questions.
-2. Do not create information.
-3. Do not use outside knowledge.
-4. If the answer is not available in the context, reply:
-"I'm sorry, I can only answer questions related to DesFlyer."
+- Give ONE short, complete answer.
+- Summarize the relevant information from the context.
+- Combine related information into one natural answer.
+- Do NOT copy sentences directly from the context.
+- Do NOT repeat the same information.
+- Do NOT include question numbers.
+- Do NOT mention the context.
+- Do NOT add information that is not in the context.
+- Do NOT ask a question.
+- End with a normal sentence, not a question mark.
+- Keep the answer within 1 or 2 sentences.
 
 Context:
 {context}
@@ -181,7 +206,8 @@ Context:
 Question:
 {question}
 
-Answer:
+Write only the final answer:
+
 """
 )
 
@@ -270,34 +296,30 @@ def ask_chatbot(question):
     retrieved_docs = retriever.invoke(
         original_question
     )
-    print("QUESTION:", original_question)
-    print("RETRIEVED DOCUMENTS:", len(retrieved_docs))
 
-    for i, doc in enumerate(retrieved_docs, start=1):
-       print(f"\n--- DOCUMENT {i} ---")
-       print(doc.page_content[:1000])
+    print("\nQUESTION:", original_question)
 
-    if not retrieved_docs:
+    print(
+        "RETRIEVED DOCUMENTS:",
+        len(retrieved_docs)
+    )
 
-        return "I'm sorry, I could not find this information in DesFlyer documents."
-
-
-    # -----------------------------
-    # Print Retrieved Documents
-    # -----------------------------
-
-    print("\n===== Retrieved Documents =====")
 
     for i, doc in enumerate(
         retrieved_docs,
         start=1
     ):
 
-        print(f"\nDocument {i}")
+        print(f"\n--- DOCUMENT {i} ---")
 
         print(
-            doc.page_content[:500]
+            doc.page_content[:1000]
         )
+
+
+    if not retrieved_docs:
+
+        return "I'm sorry, I could not find this information in DesFlyer documents."
 
 
     # -----------------------------
@@ -340,8 +362,10 @@ def ask_chatbot(question):
 
         outputs = model.generate(
             **inputs,
-            max_new_tokens=150,
+            max_new_tokens=80,
             do_sample=False,
+            repetition_penalty=1.2,
+            no_repeat_ngram_size=3,
             pad_token_id=tokenizer.eos_token_id
         )
 
@@ -354,11 +378,17 @@ def ask_chatbot(question):
         outputs[0][inputs.input_ids.shape[-1]:],
         skip_special_tokens=True
     )
+    answer = answer.strip()
 
+    if answer.endswith("?"):
+       answer = answer[:-1] + "."
+
+
+    # -----------------------------
+    # Print Generated Answer
+    # -----------------------------
 
     print("\n===== Generated Answer =====")
 
     print(answer)
-
-
-    return answer.strip()
+    return answer
