@@ -1,6 +1,8 @@
 import os
 import re
 import torch
+from threading import Thread
+from transformers import TextIteratorStreamer
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -265,29 +267,69 @@ def ask_chatbot(question):
 
     original_question = question.strip()
 
-    lower_question = original_question.lower()
+    # -----------------------------
+    # Clean Question
+    # -----------------------------
 
+    clean_question = re.sub(
+        r"[^\w\s]",
+        "",
+        original_question.lower()
+    ).strip()
 
     # -----------------------------
     # Greeting
     # -----------------------------
 
-    if lower_question in greetings:
+    greeting_phrases = [
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "good night"
+    ]
 
-        return greetings[lower_question]
+    # Check if the question starts with a greeting
+    for greeting in greeting_phrases:
 
+        if (
+            clean_question == greeting
+            or clean_question.startswith(greeting + " ")
+        ):
+
+            if "good morning" in clean_question:
+                return greetings["good morning"]
+
+            elif "good afternoon" in clean_question:
+                return greetings["good afternoon"]
+
+            elif "good evening" in clean_question:
+                return greetings["good evening"]
+
+            elif "good night" in clean_question:
+                return greetings["good night"]
+
+            elif clean_question.startswith("hello"):
+                return greetings["hello"]
+
+            elif clean_question.startswith("hey"):
+                return greetings["hey"]
+
+            elif clean_question.startswith("hi"):
+                return greetings["hi"]
 
     # -----------------------------
     # Keyword Restriction
     # -----------------------------
 
     if not any(
-        keyword in lower_question
+        keyword in clean_question
         for keyword in keywords
     ):
 
         return "I'm sorry, I can only answer questions related to DesFlyer."
-
 
     # -----------------------------
     # Retrieve Documents
@@ -304,7 +346,6 @@ def ask_chatbot(question):
         len(retrieved_docs)
     )
 
-
     for i, doc in enumerate(
         retrieved_docs,
         start=1
@@ -316,11 +357,16 @@ def ask_chatbot(question):
             doc.page_content[:1000]
         )
 
+    # -----------------------------
+    # Check Retrieved Documents
+    # -----------------------------
 
     if not retrieved_docs:
 
-        return "I'm sorry, I could not find this information in DesFlyer documents."
-
+        return (
+            "I'm sorry, I could not find this information "
+            "in DesFlyer documents."
+        )
 
     # -----------------------------
     # Create Context
@@ -331,7 +377,6 @@ def ask_chatbot(question):
         for doc in retrieved_docs
     )
 
-
     # -----------------------------
     # Create Prompt
     # -----------------------------
@@ -340,7 +385,6 @@ def ask_chatbot(question):
         context=context,
         question=original_question
     )
-
 
     # -----------------------------
     # Tokenize
@@ -353,22 +397,30 @@ def ask_chatbot(question):
         max_length=2048
     ).to(model.device)
 
-
     # -----------------------------
     # Generate Answer
     # -----------------------------
 
-    with torch.no_grad():
+    print("🤖 Generating answer...")
 
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=80,
-            do_sample=False,
-            repetition_penalty=1.2,
-            no_repeat_ngram_size=3,
-            pad_token_id=tokenizer.eos_token_id
-        )
+    try:
 
+        with torch.no_grad():
+
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=40,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id
+            )
+
+        print("✅ Answer generation completed.")
+
+    except Exception as e:
+
+        print("❌ Generation error:", e)
+
+        return "Sorry, I could not generate an answer."
 
     # -----------------------------
     # Decode Answer
@@ -378,11 +430,12 @@ def ask_chatbot(question):
         outputs[0][inputs.input_ids.shape[-1]:],
         skip_special_tokens=True
     )
+
     answer = answer.strip()
 
     if answer.endswith("?"):
-       answer = answer[:-1] + "."
 
+        answer = answer[:-1] + "."
 
     # -----------------------------
     # Print Generated Answer
@@ -391,4 +444,5 @@ def ask_chatbot(question):
     print("\n===== Generated Answer =====")
 
     print(answer)
+
     return answer

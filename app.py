@@ -1,7 +1,7 @@
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
-from rag import ask_chatbot
+from rag import ask_chatbot, stream_chatbot
 
 
 app = FastAPI(
@@ -31,3 +31,18 @@ def chat(data: Question):
         "question": data.question,
         "answer": answer
     }
+
+@app.post("/chat/stream")
+def chat_stream(data: Question):
+
+    return StreamingResponse(
+        stream_chatbot(data.question),
+        media_type="text/plain"
+    )
+def voice_assistant():
+    # 1. Detect user's voice
+    # 2. Convert voice to text
+    # 3. Send text to existing RAG chatbot
+    # 4. Get streamed response
+    # 5. Convert response to speech
+    pass
