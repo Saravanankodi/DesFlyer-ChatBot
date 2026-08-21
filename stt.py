@@ -1,7 +1,10 @@
+import re
+import time
+from collections import deque
+
 import numpy as np
 import sounddevice as sd
 import webrtcvad
-import re
 
 from scipy.io.wavfile import write
 from faster_whisper import WhisperModel
@@ -10,58 +13,515 @@ from rag import ask_chatbot
 from tts import text_to_speech
 
 
-# ========================================================
+# ============================================================
 # SETTINGS
-# ========================================================
+# ============================================================
 
 SAMPLE_RATE = 16000
-FRAME_SIZE = 160
+
+# 30 ms frame
+FRAME_SIZE = 480
+
+# WebRTC VAD
+# 0 = least aggressive
+# 3 = most aggressive
+VAD_MODE = 2
+
+# ------------------------------------------------------------
+# Speech detection
+# ------------------------------------------------------------
+
+# 15 × 30 ms = 450 ms
+# Speech must continue this long before recording starts.
+REQUIRED_SPEECH_FRAMES = 15
+
+# 40 × 30 ms = 1.2 seconds
+SILENCE_LIMIT = 40
+
+# Wait around 10 seconds for speech
+WAITING_LIMIT = 100
+
+# Maximum recording around 12 seconds
+MAX_RECORDING_FRAMES = 400
+
+# Base microphone threshold
+BASE_RMS_THRESHOLD = 700
+
+# Background noise multiplier
+# Speech must be significantly louder than background noise.
+NOISE_MULTIPLIER = 2.5
+
+# Minimum recording duration
+MIN_AUDIO_DURATION = 0.8
+
+# Maximum accepted question length
+MAX_TEXT_LENGTH = 250
+
+# TTS cooldown
+TTS_COOLDOWN = 1.5
+
+# ------------------------------------------------------------
+# Additional speech validation
+# ------------------------------------------------------------
+
+# Minimum percentage of recorded frames that must contain
+# real speech.
+MIN_VOICED_RATIO = 0.30
+
+# Minimum number of speech frames after speech starts.
+MIN_SPEECH_FRAMES = 12
+
+# Whisper confidence settings
+MAX_NO_SPEECH_PROB = 0.55
+MIN_AVG_LOGPROB = -1.0
+MAX_COMPRESSION_RATIO = 2.0
 
 
-# ========================================================
-# WHISPER MODEL
-# ========================================================
+# ============================================================
+# LOAD WHISPER
+# ============================================================
 
-stt_model = WhisperModel(
-    "base",
-    device="cpu",
-    compute_type="int8"
-)
+print("\n===================================")
+print("Loading Speech-to-Text Model")
+print("===================================")
+
+try:
+
+    stt_model = WhisperModel(
+        "base",
+        device="cpu",
+        compute_type="int8"
+    )
+
+    print("✅ STT model loaded successfully.")
+
+except Exception as error:
+
+    print("❌ Could not load STT model:")
+    print(error)
+
+    raise
 
 
-# ========================================================
+# ============================================================
+# WEBRTC VAD
+# ============================================================
+
+vad = webrtcvad.Vad(VAD_MODE)
+
+
+# ============================================================
+# NORMALIZE TEXT
+# ============================================================
+
+def normalize_text(text):
+
+    text = text.lower().strip()
+
+    text = text.replace("-", " ")
+
+    text = re.sub(
+        r"[^\w\s]",
+        "",
+        text
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+    return text
+
+
+# ============================================================
+# EXIT COMMAND
+# ============================================================
+
+def is_exit_command(text):
+
+    normalized = normalize_text(text)
+
+    # Keep exit commands simple but require exact match.
+    # This prevents sentences such as:
+    # "I have to go"
+    # from being treated as exit.
+    exit_commands = {
+        "bye",
+        "bye bye",
+        "goodbye",
+        "good bye",
+        "exit",
+        "quit"
+    }
+
+    return normalized in exit_commands
+
+
+# ============================================================
+# DESFLYER WORD CORRECTIONS
+# ============================================================
+
+def correct_desflyer_words(text):
+
+    corrections = {
+
+        "this player": "DesFlyer",
+        "desk player": "DesFlyer",
+        "desk flyer": "DesFlyer",
+        "des flyer": "DesFlyer",
+        "this flyer": "DesFlyer",
+        "the flyer": "DesFlyer",
+        "display": "DesFlyer",
+        "des fire": "DesFlyer",
+        "des flier": "DesFlyer",
+        "desk flier": "DesFlyer"
+    }
+
+    for wrong, correct in corrections.items():
+
+        text = re.sub(
+            rf"\b{re.escape(wrong)}\b",
+            correct,
+            text,
+            flags=re.IGNORECASE
+        )
+
+    return text
+
+
+# ============================================================
+# MICROPHONE NOISE CALIBRATION
+# ============================================================
+
+def calibrate_microphone():
+
+    print("\n🎧 Calibrating microphone...")
+    print("Please remain silent for 1 second.")
+
+    rms_values = []
+
+    def calibration_callback(
+        indata,
+        frames_count,
+        callback_time,
+        status
+    ):
+
+        audio = (
+            indata[:, 0] * 32767
+        ).astype(np.int16)
+
+        rms = np.sqrt(
+            np.mean(
+                audio.astype(np.float32) ** 2
+            )
+        )
+
+        rms_values.append(rms)
+
+    try:
+
+        with sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            blocksize=FRAME_SIZE,
+            dtype="float32",
+            callback=calibration_callback
+        ):
+
+            # 1.2 seconds
+            sd.sleep(1200)
+
+    except Exception as error:
+
+        print(
+            "❌ Microphone calibration failed:",
+            error
+        )
+
+        return BASE_RMS_THRESHOLD
+
+    if not rms_values:
+
+        print(
+            "⚠️ Could not measure background noise."
+        )
+
+        return BASE_RMS_THRESHOLD
+
+    # Use median instead of maximum because one sudden noise
+    # should not completely destroy the threshold.
+    noise_floor = float(
+        np.median(rms_values)
+    )
+
+    # Dynamic threshold
+    dynamic_threshold = max(
+        BASE_RMS_THRESHOLD,
+        noise_floor * NOISE_MULTIPLIER
+    )
+
+    print(
+        f"🔊 Background noise level: "
+        f"{noise_floor:.2f}"
+    )
+
+    print(
+        f"🎯 Speech threshold: "
+        f"{dynamic_threshold:.2f}"
+    )
+
+    return dynamic_threshold
+
+
+# ============================================================
+# CHECK WHISPER RESULT
+# ============================================================
+
+def is_reliable_transcription(
+    segments,
+    text,
+    voiced_ratio
+):
+
+    if not segments:
+
+        print(
+            "❌ Whisper returned no segments."
+        )
+
+        return False
+
+
+    # ========================================================
+    # 1. VOICED RATIO
+    # ========================================================
+
+    print(
+        f"📊 Voiced frame ratio: "
+        f"{voiced_ratio:.2f}"
+    )
+
+    if voiced_ratio < MIN_VOICED_RATIO:
+
+        print(
+            "❌ Too little actual speech detected."
+        )
+
+        return False
+
+
+    # ========================================================
+    # 2. NO SPEECH PROBABILITY
+    # ========================================================
+
+    no_speech_probs = [
+        segment.no_speech_prob
+        for segment in segments
+        if segment.no_speech_prob is not None
+    ]
+
+    if no_speech_probs:
+
+        average_no_speech = np.mean(
+            no_speech_probs
+        )
+
+        print(
+            f"📊 Average no-speech probability: "
+            f"{average_no_speech:.2f}"
+        )
+
+        if average_no_speech > MAX_NO_SPEECH_PROB:
+
+            print(
+                "❌ Whisper thinks this is mostly silence/noise."
+            )
+
+            return False
+
+
+    # ========================================================
+    # 3. LOG PROBABILITY
+    # ========================================================
+
+    log_probs = [
+        segment.avg_logprob
+        for segment in segments
+        if segment.avg_logprob is not None
+    ]
+
+    if log_probs:
+
+        average_logprob = np.mean(
+            log_probs
+        )
+
+        print(
+            f"📊 Average log probability: "
+            f"{average_logprob:.2f}"
+        )
+
+        if average_logprob < MIN_AVG_LOGPROB:
+
+            print(
+                "❌ Whisper confidence is too low."
+            )
+
+            return False
+
+
+    # ========================================================
+    # 4. COMPRESSION RATIO
+    # ========================================================
+
+    compression_ratios = [
+        segment.compression_ratio
+        for segment in segments
+        if segment.compression_ratio is not None
+    ]
+
+    if compression_ratios:
+
+        max_compression = max(
+            compression_ratios
+        )
+
+        print(
+            f"📊 Compression ratio: "
+            f"{max_compression:.2f}"
+        )
+
+        if max_compression > MAX_COMPRESSION_RATIO:
+
+            print(
+                "❌ Possible Whisper hallucination."
+            )
+
+            return False
+
+
+    # ========================================================
+    # 5. EMPTY TEXT
+    # ========================================================
+
+    if not text.strip():
+
+        print(
+            "❌ Empty transcription."
+        )
+
+        return False
+
+
+    # ========================================================
+    # 6. REPETITION
+    # ========================================================
+
+    words = text.lower().split()
+
+    if len(words) >= 6:
+
+        counts = {}
+
+        for word in words:
+
+            counts[word] = (
+                counts.get(word, 0) + 1
+            )
+
+        highest_count = max(
+            counts.values()
+        )
+
+        repetition_ratio = (
+            highest_count / len(words)
+        )
+
+        print(
+            f"📊 Repetition ratio: "
+            f"{repetition_ratio:.2f}"
+        )
+
+        if repetition_ratio > 0.55:
+
+            print(
+                "❌ Repetitive transcription detected."
+            )
+
+            return False
+
+
+    # ========================================================
+    # 7. REPEATED PHRASES
+    # ========================================================
+
+    words = [
+        word.lower()
+        for word in words
+    ]
+
+    if len(words) >= 8:
+
+        for i in range(
+            len(words) - 3
+        ):
+
+            phrase = words[i:i + 3]
+
+            later = words[i + 3:]
+
+            for j in range(
+                len(later) - 2
+            ):
+
+                if later[j:j + 3] == phrase:
+
+                    print(
+                        "❌ Repeated phrase detected."
+                    )
+
+                    return False
+
+
+    return True
+
+
+# ============================================================
 # SPEECH TO TEXT
-# ========================================================
+# ============================================================
 
 def speech_to_text():
 
     print("\n🎤 Speak now...")
-    print("⏳ Waiting for speech...")
+    print("⏳ I am listening. Take your time...")
 
-    # your existing code...
-def speech_to_text():
+    # --------------------------------------------------------
+    # Calibrate microphone before each listening session.
+    # --------------------------------------------------------
 
-    print("\n🎤 Speak now...")
-    print("⏳ Waiting for speech...")
+    speech_threshold = calibrate_microphone()
 
     audio_frames = []
 
+    speech_flags = []
+
     speech_started = False
+
     consecutive_speech_frames = 0
+
     silence_count = 0
+
     total_recording_frames = 0
 
-    # ========================================================
-    # SETTINGS
-    # ========================================================
-    vad = webrtcvad.Vad(3)
-    REQUIRED_SPEECH_FRAMES = 8
-    SILENCE_LIMIT = 40
-    WAITING_LIMIT = 100
-    MAX_RECORDING_FRAMES = 500
+    actual_speech_frames = 0
 
-    # Minimum audio volume required
-    RMS_THRESHOLD = 500
+    pre_buffer = deque(
+        maxlen=10
+    )
+
 
     # ========================================================
     # AUDIO CALLBACK
@@ -78,17 +538,27 @@ def speech_to_text():
         nonlocal consecutive_speech_frames
         nonlocal silence_count
         nonlocal total_recording_frames
+        nonlocal actual_speech_frames
 
         if status:
-            print("⚠️ Microphone status:", status)
 
-        # Convert microphone audio to int16
+            print(
+                "⚠️ Microphone:",
+                status
+            )
+
+
+        # ----------------------------------------------------
+        # Convert to int16
+        # ----------------------------------------------------
+
         audio = (
             indata[:, 0] * 32767
         ).astype(np.int16)
 
+
         # ----------------------------------------------------
-        # Calculate audio volume
+        # RMS
         # ----------------------------------------------------
 
         rms = np.sqrt(
@@ -97,29 +567,42 @@ def speech_to_text():
             )
         )
 
+
         # ----------------------------------------------------
-        # WebRTC VAD
+        # VAD
         # ----------------------------------------------------
 
-        vad_speech = vad.is_speech(
-            audio.tobytes(),
-            SAMPLE_RATE
-        )
+        try:
 
-        # Speech is accepted only when:
-        # 1. VAD detects speech
-        # 2. Audio volume is high enough
+            vad_speech = vad.is_speech(
+                audio.tobytes(),
+                SAMPLE_RATE
+            )
+
+        except Exception:
+
+            vad_speech = False
+
+
+        # ----------------------------------------------------
+        # Real speech
+        # ----------------------------------------------------
 
         real_speech = (
             vad_speech
-            and rms > RMS_THRESHOLD
+            and rms >= speech_threshold
         )
 
+
         # ====================================================
-        # BEFORE SPEECH STARTS
+        # BEFORE SPEECH
         # ====================================================
 
         if not speech_started:
+
+            pre_buffer.append(
+                audio.copy()
+            )
 
             if real_speech:
 
@@ -129,7 +612,11 @@ def speech_to_text():
 
                 consecutive_speech_frames = 0
 
+
+            # ------------------------------------------------
             # Require continuous speech
+            # ------------------------------------------------
+
             if (
                 consecutive_speech_frames
                 >= REQUIRED_SPEECH_FRAMES
@@ -138,17 +625,33 @@ def speech_to_text():
                 speech_started = True
 
                 print(
-                    "🎙️ Real speech detected..."
+                    "\n🎙️ Speech detected."
                 )
 
-                audio_frames.append(
-                    audio.copy()
+                print(
+                    "👂 Listening..."
                 )
+
+                # Add previous audio
+                for frame in pre_buffer:
+
+                    audio_frames.append(
+                        frame
+                    )
+
+                    speech_flags.append(
+                        False
+                    )
+
+                pre_buffer.clear()
 
                 silence_count = 0
 
+                actual_speech_frames = 0
+
+
         # ====================================================
-        # AFTER SPEECH STARTS
+        # AFTER SPEECH
         # ====================================================
 
         else:
@@ -157,9 +660,16 @@ def speech_to_text():
                 audio.copy()
             )
 
+            speech_flags.append(
+                real_speech
+            )
+
             total_recording_frames += 1
 
+
             if real_speech:
+
+                actual_speech_frames += 1
 
                 silence_count = 0
 
@@ -167,8 +677,9 @@ def speech_to_text():
 
                 silence_count += 1
 
+
     # ========================================================
-    # START MICROPHONE
+    # OPEN MICROPHONE
     # ========================================================
 
     try:
@@ -181,11 +692,11 @@ def speech_to_text():
             callback=audio_callback
         ):
 
-            waiting_frames = 0
+            # ------------------------------------------------
+            # Wait for speech
+            # ------------------------------------------------
 
-            # ------------------------------------------------
-            # Wait for real speech
-            # ------------------------------------------------
+            waiting_frames = 0
 
             while not speech_started:
 
@@ -193,66 +704,105 @@ def speech_to_text():
 
                 waiting_frames += 1
 
-                if waiting_frames >= WAITING_LIMIT:
+                if (
+                    waiting_frames
+                    >= WAITING_LIMIT
+                ):
 
                     print(
-                        "❌ No speech detected."
+                        "\n⏳ No speech detected."
                     )
 
                     print(
-                        "🎤 Please speak again."
+                        "🎤 Please speak when you are ready."
                     )
 
                     return ""
 
+
             # ------------------------------------------------
-            # Continue recording
+            # Record
             # ------------------------------------------------
 
             while True:
 
                 sd.sleep(100)
 
-                # Stop after enough silence
-                if silence_count >= SILENCE_LIMIT:
+
+                # --------------------------------------------
+                # Stop after silence
+                # --------------------------------------------
+
+                if (
+                    silence_count
+                    >= SILENCE_LIMIT
+                ):
+
+                    print(
+                        "\n⏹️ User stopped speaking."
+                    )
 
                     break
 
-                # Safety limit
+
+                # --------------------------------------------
+                # Maximum recording
+                # --------------------------------------------
+
                 if (
                     total_recording_frames
                     >= MAX_RECORDING_FRAMES
                 ):
 
                     print(
-                        "⏱️ Maximum recording time reached."
+                        "\n⏱️ Maximum recording time reached."
                     )
 
                     break
 
+
     except Exception as error:
 
         print(
-            "❌ Microphone error:",
+            "\n❌ Microphone error:",
             error
         )
 
         return ""
 
+
     # ========================================================
-    # CHECK RECORDED AUDIO
+    # CHECK AUDIO
     # ========================================================
 
     if not audio_frames:
 
         print(
-            "❌ No speech recorded."
+            "❌ No audio recorded."
         )
 
         return ""
 
-    print("✅ Speech completed.")
-    print("🔄 Converting speech to text...")
+
+    # ========================================================
+    # CHECK MINIMUM SPEECH FRAMES
+    # ========================================================
+
+    if (
+        actual_speech_frames
+        < MIN_SPEECH_FRAMES
+    ):
+
+        print(
+            "❌ Not enough actual speech detected."
+        )
+
+        print(
+            "🎤 Please speak clearly."
+        )
+
+        return ""
+
 
     # ========================================================
     # COMBINE AUDIO
@@ -262,35 +812,97 @@ def speech_to_text():
         audio_frames
     )
 
+
     # ========================================================
-    # FINAL AUDIO VOLUME CHECK
+    # VOICED RATIO
     # ========================================================
 
-    rms = np.sqrt(
+    if speech_flags:
+
+        voiced_ratio = (
+            sum(speech_flags)
+            / len(speech_flags)
+        )
+
+    else:
+
+        voiced_ratio = 0.0
+
+
+    # ========================================================
+    # FINAL RMS
+    # ========================================================
+
+    final_rms = np.sqrt(
         np.mean(
             audio.astype(np.float32) ** 2
         )
     )
 
     print(
-        f"🔊 Audio volume: {rms:.2f}"
+        f"🔊 Final audio level: "
+        f"{final_rms:.2f}"
     )
 
-    if rms < RMS_THRESHOLD:
+
+    print(
+        f"📊 Actual speech frames: "
+        f"{actual_speech_frames}"
+    )
+
+    print(
+        f"📊 Voiced ratio: "
+        f"{voiced_ratio:.2f}"
+    )
+
+
+    # ========================================================
+    # FINAL VOLUME CHECK
+    # ========================================================
+
+    if final_rms < speech_threshold:
 
         print(
-            "❌ Audio volume too low."
+            "❌ Audio too quiet."
         )
 
         print(
-            "🎤 No clear speech detected. "
-            "Please speak again."
+            "🎤 No clear speech detected."
         )
 
         return ""
 
+
     # ========================================================
-    # SAVE AUDIO
+    # DURATION
+    # ========================================================
+
+    duration = (
+        len(audio)
+        / SAMPLE_RATE
+    )
+
+    print(
+        f"⏱️ Recording duration: "
+        f"{duration:.2f} seconds"
+    )
+
+
+    if duration < MIN_AUDIO_DURATION:
+
+        print(
+            "❌ Recording too short."
+        )
+
+        print(
+            "🎤 Please speak a complete question."
+        )
+
+        return ""
+
+
+    # ========================================================
+    # SAVE WAV
     # ========================================================
 
     try:
@@ -314,8 +926,9 @@ def speech_to_text():
 
         return ""
 
+
     # ========================================================
-    # WHISPER STT
+    # WHISPER
     # ========================================================
 
     print(
@@ -332,73 +945,75 @@ def speech_to_text():
 
             language="en",
 
-            # IMPORTANT:
-            # No initial_prompt here.
-            # This prevents Whisper from hallucinating
-            # DesFlyer-related text when there is silence.
-
             condition_on_previous_text=False,
-
-            vad_filter=False,
 
             temperature=0.0,
 
-            no_speech_threshold=0.6,
+            vad_filter=True,
+
+            vad_parameters={
+                "min_silence_duration_ms": 700
+            },
+
+            no_speech_threshold=0.60,
 
             log_prob_threshold=-1.0,
 
-            compression_ratio_threshold=2.4
+            compression_ratio_threshold=2.0
+
         )
 
+        segments = list(segments)
+
+
+        # ----------------------------------------------------
+        # Build transcription
+        # ----------------------------------------------------
+
+        text_parts = []
+
+        for segment in segments:
+
+            if (
+                segment.no_speech_prob
+                is not None
+                and segment.no_speech_prob
+                > MAX_NO_SPEECH_PROB
+            ):
+
+                continue
+
+            if segment.text.strip():
+
+                text_parts.append(
+                    segment.text.strip()
+                )
+
+
         text = " ".join(
-            segment.text
-            for segment in segments
+            text_parts
         ).strip()
+
 
     except Exception as error:
 
         print(
-            "❌ STT transcription error:",
+            "❌ Whisper error:",
             error
         )
 
         return ""
 
-    # ========================================================
-    # CORRECT COMMON STT ERRORS
-    # ========================================================
-
-    corrections = {
-
-        "display": "DesFlyer",
-
-        "des flyer": "DesFlyer",
-
-        "desk flyer": "DesFlyer",
-
-        "this flyer": "DesFlyer",
-
-        "the flyer": "DesFlyer"
-    }
-
-    for wrong, correct in corrections.items():
-
-        text = re.sub(
-            rf"\b{re.escape(wrong)}\b",
-            correct,
-            text,
-            flags=re.IGNORECASE
-        )
 
     # ========================================================
-    # CHECK TRANSCRIPTION
+    # RELIABILITY CHECK
     # ========================================================
 
-    if not text:
-
-        print(
-            "❌ I could not understand your speech."
-        )
+    if not is_reliable_transcription(
+        segments,
+        text,
+        voiced_ratio
+    ):
 
         print(
             "🎤 Please speak again."
@@ -406,42 +1021,144 @@ def speech_to_text():
 
         return ""
 
-    print(
-        "\n📝 You said:",
+
+    # ========================================================
+    # CLEAN TEXT
+    # ========================================================
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+
+    if not text:
+
+        print(
+            "❌ No understandable speech."
+        )
+
+        return ""
+
+
+    # ========================================================
+    # REMOVE EXACT REPEATED WORDS
+    # ========================================================
+
+    words = text.split()
+
+    cleaned_words = []
+
+    repeat_count = 0
+
+    previous_word = None
+
+
+    for word in words:
+
+        if (
+            previous_word
+            and word.lower()
+            == previous_word.lower()
+        ):
+
+            repeat_count += 1
+
+            if repeat_count >= 2:
+
+                continue
+
+        else:
+
+            repeat_count = 0
+
+
+        cleaned_words.append(
+            word
+        )
+
+        previous_word = word
+
+
+    text = " ".join(
+        cleaned_words
+    ).strip()
+
+
+    # ========================================================
+    # DESFLYER CORRECTION
+    # ========================================================
+
+    text = correct_desflyer_words(
         text
     )
 
-    # ========================================================
-    # NORMALIZE TEXT
-    # ========================================================
-
-    normalized_text = re.sub(
-        r"[^\w\s]",
-        "",
-        text.lower()
-    ).strip()
 
     # ========================================================
-    # EXIT COMMANDS
+    # LENGTH CHECK
     # ========================================================
 
-    if normalized_text in [
-        "exit",
-        "quit",
-        "bye"
-    ]:
+    if len(text) > MAX_TEXT_LENGTH:
 
-        return normalized_text
+        print(
+            "❌ Transcription is too long/unclear."
+        )
+
+        print(
+            "📝 Whisper result:",
+            text
+        )
+
+        print(
+            "🎤 Please ask a shorter question."
+        )
+
+        return ""
+
+
+    # ========================================================
+    # DISPLAY
+    # ========================================================
+
+    print(
+        "\n📝 You said:"
+    )
+
+    print(
+        "   ",
+        text
+    )
+
+
+    # ========================================================
+    # EXIT COMMAND
+    # ========================================================
+
+    if is_exit_command(text):
+
+        print(
+            "\n👋 Goodbye!"
+        )
+
+        return "__EXIT__"
+
 
     # ========================================================
     # THANK YOU
     # ========================================================
 
-    if normalized_text in [
+    normalized = normalize_text(
+        text
+    )
+
+
+    if normalized in {
         "thank you",
         "thanks",
-        "thank you very much"
-    ]:
+        "thank you very much",
+        "thanks very much"
+    }:
 
         answer = (
             "You're welcome! "
@@ -452,18 +1169,18 @@ def speech_to_text():
             "\n===== Voice Assistant ====="
         )
 
-        print(answer)
+        print(
+            answer
+        )
 
         print(
-            "🔊 Converting answer to speech..."
+            "\n🔊 Speaking answer..."
         )
 
         try:
 
-            text_to_speech(answer)
-
-            print(
-                "✅ Voice response completed."
+            text_to_speech(
+                answer
             )
 
         except Exception as error:
@@ -473,19 +1190,30 @@ def speech_to_text():
                 error
             )
 
+        time.sleep(
+            TTS_COOLDOWN
+        )
+
+        print(
+            "🎤 Ready for your next question."
+        )
+
         return text
 
+
     # ========================================================
-    # SEND TO RAG
+    # RAG
     # ========================================================
 
     print(
-        "🤖 Getting answer from RAG..."
+        "\n🤖 Getting answer from RAG..."
     )
 
     try:
 
-        answer = ask_chatbot(text)
+        answer = ask_chatbot(
+            text
+        )
 
     except Exception as error:
 
@@ -496,39 +1224,132 @@ def speech_to_text():
 
         return text
 
+
     # ========================================================
-    # DISPLAY RAG ANSWER
+    # RAG ANSWER
     # ========================================================
+
+    if not answer:
+
+        print(
+            "❌ No answer generated."
+        )
+
+        return text
+
 
     print(
         "\n===== RAG Answer ====="
     )
 
-    print(answer)
+    print(
+        answer
+    )
+
 
     # ========================================================
-    # TEXT-TO-SPEECH
+    # TTS
     # ========================================================
 
-    if answer:
+    print(
+        "\n🔊 Speaking answer..."
+    )
 
-        print(
-            "🔊 Converting answer to speech..."
+    try:
+
+        text_to_speech(
+            answer
         )
 
-        try:
+    except Exception as error:
 
-            text_to_speech(answer)
+        print(
+            "❌ TTS error:",
+            error
+        )
 
-            print(
-                "✅ Voice response completed."
-            )
 
-        except Exception as error:
+    # --------------------------------------------------------
+    # Allow microphone/speaker to settle
+    # --------------------------------------------------------
 
-            print(
-                "❌ TTS error:",
-                error
-            )
+    time.sleep(
+        TTS_COOLDOWN
+    )
+
+    print(
+        "\n🎤 Ready for your next question."
+    )
 
     return text
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print(
+        "\n===================================="
+    )
+
+    print(
+        "🎙️ DesFlyer Voice Assistant"
+    )
+
+    print(
+        "===================================="
+    )
+
+    print(
+        "Ask your question naturally."
+    )
+
+    print(
+        "You can pause while speaking."
+    )
+
+    print(
+        "Say 'bye', 'goodbye', 'exit' or 'quit' to stop."
+    )
+
+    print(
+        "===================================="
+    )
+
+
+    while True:
+
+        result = speech_to_text()
+
+
+        # ----------------------------------------------------
+        # No reliable speech
+        # ----------------------------------------------------
+
+        if not result:
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Exit
+        # ----------------------------------------------------
+
+        if result == "__EXIT__":
+
+            print(
+                "\n👋 DesFlyer Voice Assistant stopped."
+            )
+
+            break
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+
+    main()
