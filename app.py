@@ -1,8 +1,19 @@
 import asyncio
 import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse, HTMLResponse
+import uvicorn
+
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect
+)
+
+from fastapi.responses import (
+    StreamingResponse,
+    HTMLResponse
+)
+
 from pydantic import BaseModel
 
 from rag import ask_chatbot
@@ -15,8 +26,12 @@ from tts import text_to_speech
 # ============================================================
 
 app = FastAPI(
+
     title="DesFlyer Voice Assistant API",
-    description="RAG based Voice Assistant using Gemma 2B",
+
+    description=
+        "RAG based Voice Assistant using Gemma 2B",
+
     version="1.0"
 )
 
@@ -26,6 +41,7 @@ app = FastAPI(
 # ============================================================
 
 class Question(BaseModel):
+
     question: str
 
 
@@ -37,12 +53,22 @@ class Question(BaseModel):
 def home():
 
     return {
-        "message": "DesFlyer Voice Assistant API is running",
+
+        "message":
+            "DesFlyer Voice Assistant API is running",
+
         "endpoints": {
+
             "chat": "/chat",
-            "chat_stream": "/chat/stream",
-            "voice": "/voice",
-            "websocket": "/ws/voice"
+
+            "chat_stream":
+                "/chat/stream",
+
+            "voice":
+                "/voice",
+
+            "websocket":
+                "/ws/voice"
         }
     }
 
@@ -55,8 +81,14 @@ def home():
 def chat(data: Question):
 
     print("\n====================================")
-    print("🎤 User:", data.question)
+
+    print(
+        "QUESTION:",
+        data.question
+    )
+
     print("====================================")
+
 
     try:
 
@@ -67,8 +99,10 @@ def chat(data: Question):
         )
 
         generation_time = (
-            time.time() - start_time
+            time.time()
+            - start_time
         )
+
 
         print(
             f"⏱️ Generation time: "
@@ -80,10 +114,16 @@ def chat(data: Question):
             answer
         )
 
+
         return {
-            "question": data.question,
-            "answer": answer
+
+            "question":
+                data.question,
+
+            "answer":
+                answer
         }
+
 
     except Exception as error:
 
@@ -93,30 +133,21 @@ def chat(data: Question):
         )
 
         return {
-            "question": data.question,
-            "answer": "Sorry, an error occurred while generating the answer."
+
+            "question":
+                data.question,
+
+            "answer":
+                "Sorry, an error occurred."
         }
 
 
 # ============================================================
 # STREAMING CHAT
 # ============================================================
-#
-# NOTE:
-# Your current ask_chatbot() generates the complete answer
-# before returning it.
-#
-# Therefore this endpoint currently sends the completed answer
-# as one response rather than token-by-token streaming.
-#
-# ============================================================
 
 @app.post("/chat/stream")
 def chat_stream(data: Question):
-
-    print("\n====================================")
-    print("STREAMING QUESTION:", data.question)
-    print("====================================")
 
     try:
 
@@ -125,220 +156,29 @@ def chat_stream(data: Question):
         )
 
         return StreamingResponse(
+
             iter([answer]),
-            media_type="text/plain"
+
+            media_type=
+                "text/plain"
         )
 
     except Exception as error:
 
         print(
-            "\n❌ Streaming error:",
+            "❌ Streaming error:",
             error
         )
 
         return StreamingResponse(
+
             iter([
                 "Sorry, an error occurred."
             ]),
-            media_type="text/plain"
+
+            media_type=
+                "text/plain"
         )
-
-
-# ============================================================
-# PROCESS ONE VOICE QUESTION
-# ============================================================
-#
-# Pipeline:
-#
-# Microphone
-#     ↓
-# VAD
-#     ↓
-# Faster-Whisper
-#     ↓
-# Text
-#     ↓
-# RAG
-#     ↓
-# Gemma
-#     ↓
-# TTS
-#
-# speech_to_text() handles microphone + VAD + Whisper.
-#
-# app.py handles RAG + TTS + WebSocket communication.
-#
-# ============================================================
-
-def process_voice_question():
-
-    # ========================================================
-    # STEP 1 - SPEECH TO TEXT
-    # ========================================================
-
-    print("\n🎤 Waiting for your question...")
-
-    try:
-
-        text = speech_to_text()
-
-    except KeyboardInterrupt:
-
-        raise
-
-    except Exception as error:
-
-        print(
-            "\n❌ STT error:",
-            error
-        )
-
-        return {
-            "status": "error",
-            "text": "",
-            "answer": ""
-        }
-
-
-    # ========================================================
-    # NO SPEECH
-    # ========================================================
-
-    if not text:
-
-        print(
-            "\n⚠️ No valid speech detected."
-        )
-
-        return {
-            "status": "empty",
-            "text": "",
-            "answer": ""
-        }
-
-
-    # ========================================================
-    # EXIT
-    # ========================================================
-
-    if text == "__EXIT__":
-
-        print(
-            "\n👋 Exit command received."
-        )
-
-        return {
-            "status": "exit",
-            "text": text,
-            "answer": ""
-        }
-
-
-    # ========================================================
-    # STEP 2 - RAG
-    # ========================================================
-
-    print(
-        "\n🤖 Getting answer from RAG..."
-    )
-
-    start_time = time.time()
-
-    try:
-
-        answer = ask_chatbot(
-            text
-        )
-
-    except Exception as error:
-
-        print(
-            "\n❌ RAG error:"
-        )
-
-        print(error)
-
-        return {
-            "status": "error",
-            "text": text,
-            "answer": ""
-        }
-
-
-    generation_time = (
-        time.time() - start_time
-    )
-
-
-    # ========================================================
-    # CHECK ANSWER
-    # ========================================================
-
-    if not answer:
-
-        print(
-            "\n❌ RAG returned an empty answer."
-        )
-
-        return {
-            "status": "error",
-            "text": text,
-            "answer": ""
-        }
-
-
-    print(
-        f"\n⏱️ Generation time: "
-        f"{generation_time:.2f} seconds"
-    )
-
-
-    # ========================================================
-    # STEP 3 - TTS
-    # ========================================================
-
-    print(
-        "\n🔊 Speaking answer..."
-    )
-
-    try:
-
-        text_to_speech(
-            answer
-        )
-
-        print(
-            "✅ Speech completed."
-        )
-
-    except Exception as error:
-
-        print(
-            "\n❌ TTS error:"
-        )
-
-        print(error)
-
-        # TTS failure should not destroy
-        # the WebSocket conversation.
-
-
-    # ========================================================
-    # SMALL MICROPHONE/SPEAKER SETTLE TIME
-    # ========================================================
-
-    time.sleep(0.5)
-
-
-    # ========================================================
-    # RETURN RESULT
-    # ========================================================
-
-    return {
-        "status": "success",
-        "text": text,
-        "answer": answer
-    }
 
 
 # ============================================================
@@ -352,15 +192,11 @@ async def websocket_voice(
 
     await websocket.accept()
 
+
     print("\n====================================")
     print("🔌 WebSocket connected")
     print("====================================")
 
-
-    # --------------------------------------------------------
-    # Prevent multiple voice processing operations
-    # at the same time.
-    # --------------------------------------------------------
 
     processing = False
 
@@ -368,7 +204,7 @@ async def websocket_voice(
     try:
 
         # ====================================================
-        # INITIAL CONNECTION
+        # CONNECTED
         # ====================================================
 
         await websocket.send_text(
@@ -381,28 +217,28 @@ async def websocket_voice(
 
 
         # ====================================================
-        # KEEP CONNECTION ALIVE
+        # MAIN LOOP
         # ====================================================
 
         while True:
 
-            # ------------------------------------------------
-            # Wait for browser command
-            # ------------------------------------------------
+            message = (
+                await websocket.receive_text()
+            )
 
-            message = await websocket.receive_text()
-
-            message = message.strip().lower()
+            message = (
+                message.strip().lower()
+            )
 
 
             print(
-                "\n📨 WebSocket command:",
+                "\n📨 Command:",
                 message
             )
 
 
             # =================================================
-            # START VOICE
+            # START
             # =================================================
 
             if message in {
@@ -410,11 +246,6 @@ async def websocket_voice(
                 "voice",
                 "listen"
             }:
-
-
-                # ------------------------------------------------
-                # Prevent duplicate start commands
-                # ------------------------------------------------
 
                 if processing:
 
@@ -430,9 +261,9 @@ async def websocket_voice(
 
                 try:
 
-                    # --------------------------------------------
-                    # Tell browser we are listening
-                    # --------------------------------------------
+                    # ==========================================
+                    # STATE 1
+                    # ==========================================
 
                     await websocket.send_text(
                         "LISTENING"
@@ -440,41 +271,26 @@ async def websocket_voice(
 
 
                     print(
-                        "\n🎤 Starting voice input..."
+                        "\n🎤 STATE: LISTENING"
                     )
 
 
-                    # --------------------------------------------
-                    # Run blocking operation in thread
-                    # --------------------------------------------
+                    # ==========================================
+                    # STT
+                    # ==========================================
 
-                    result = await asyncio.to_thread(
-                        process_voice_question
+                    user_text = (
+                        await asyncio.to_thread(
+                            speech_to_text
+                        )
                     )
 
 
-                    # =================================================
-                    # EXIT
-                    # =================================================
-
-                    if result["status"] == "exit":
-
-                        await websocket.send_text(
-                            "EXIT"
-                        )
-
-                        await websocket.send_text(
-                            "Goodbye!"
-                        )
-
-                        break
-
-
-                    # =================================================
+                    # ==========================================
                     # NO SPEECH
-                    # =================================================
+                    # ==========================================
 
-                    if result["status"] == "empty":
+                    if not user_text:
 
                         await websocket.send_text(
                             "NO_SPEECH"
@@ -487,11 +303,77 @@ async def websocket_voice(
                         continue
 
 
-                    # =================================================
-                    # ERROR
-                    # =================================================
+                    # ==========================================
+                    # EXIT
+                    # ==========================================
 
-                    if result["status"] == "error":
+                    if user_text == "__EXIT__":
+
+                        await websocket.send_text(
+                            "EXIT"
+                        )
+
+                        await websocket.send_text(
+                            "Goodbye!"
+                        )
+
+                        break
+
+
+                    # ==========================================
+                    # STATE 2
+                    # PROCESSING
+                    # ==========================================
+
+                    await websocket.send_text(
+                        "PROCESSING"
+                    )
+
+
+                    print(
+                        "\n⚙️ STATE: PROCESSING"
+                    )
+
+
+                    # ==========================================
+                    # SEND TRANSCRIPTION
+                    # ==========================================
+
+                    await websocket.send_text(
+
+                        "USER:" +
+                        user_text
+                    )
+
+
+                    print(
+                        "\n🎤 User:",
+                        user_text
+                    )
+
+
+                    # ==========================================
+                    # RAG
+                    # ==========================================
+
+                    rag_start = time.time()
+
+
+                    try:
+
+                        answer = (
+                            await asyncio.to_thread(
+                                ask_chatbot,
+                                user_text
+                            )
+                        )
+
+                    except Exception as error:
+
+                        print(
+                            "❌ RAG error:",
+                            error
+                        )
 
                         await websocket.send_text(
                             "ERROR"
@@ -504,76 +386,123 @@ async def websocket_voice(
                         continue
 
 
-                    # =================================================
-                    # SUCCESS
-                    # =================================================
-
-                    if result["status"] == "success":
-
-                        user_text = result["text"]
-
-                        answer = result["answer"]
+                    rag_time = (
+                        time.time()
+                        - rag_start
+                    )
 
 
-                        # --------------------------------------------
-                        # PRINT USER QUESTION ONLY ONCE
-                        # --------------------------------------------
-
-                        print(
-                            "\n🎤 User:",
-                            user_text
-                        )
+                    print(
+                        f"⏱️ RAG time: "
+                        f"{rag_time:.2f} seconds"
+                    )
 
 
-                        # --------------------------------------------
-                        # PRINT ANSWER ONLY ONCE
-                        # --------------------------------------------
+                    # ==========================================
+                    # EMPTY ANSWER
+                    # ==========================================
 
-                        print(
-                            "\n🤖 DesFlyer:",
-                            answer
-                        )
-
-
-                        # --------------------------------------------
-                        # SEND USER QUESTION
-                        # --------------------------------------------
+                    if not answer:
 
                         await websocket.send_text(
-                            "USER:" + user_text
+                            "ERROR"
                         )
-
-
-                        # --------------------------------------------
-                        # SEND CHATBOT ANSWER
-                        # --------------------------------------------
-
-                        await websocket.send_text(
-                            "ANSWER:" + answer
-                        )
-
-
-                        # --------------------------------------------
-                        # TELL FRONTEND ANSWER IS COMPLETE
-                        # --------------------------------------------
-
-                        await websocket.send_text(
-                            "SPEECH_COMPLETED"
-                        )
-
-
-                        # --------------------------------------------
-                        # SAME CONNECTION READY AGAIN
-                        # --------------------------------------------
 
                         await websocket.send_text(
                             "READY"
                         )
 
+                        continue
+
+
+                    # ==========================================
+                    # SEND ANSWER
+                    # ==========================================
+
+                    await websocket.send_text(
+
+                        "ANSWER:" +
+                        answer
+                    )
+
+
+                    print(
+                        "\n🤖 DesFlyer:",
+                        answer
+                    )
+
+
+                    # ==========================================
+                    # STATE 3
+                    # SPEAKING
+                    # ==========================================
+
+                    await websocket.send_text(
+                        "SPEAKING"
+                    )
+
+
+                    print(
+                        "\n🔊 STATE: SPEAKING"
+                    )
+
+
+                    # ==========================================
+                    # TTS
+                    # ==========================================
+
+                    try:
+
+                        await asyncio.to_thread(
+
+                            text_to_speech,
+
+                            answer
+                        )
 
                         print(
-                            "\n🔄 Ready for next question."
+                            "\n✅ TTS completed."
                         )
+
+                    except Exception as error:
+
+                        print(
+                            "\n❌ TTS error:",
+                            error
+                        )
+
+
+                    # ==========================================
+                    # AUDIO SETTLE
+                    # ==========================================
+
+                    await asyncio.sleep(
+                        0.5
+                    )
+
+
+                    # ==========================================
+                    # SPEECH COMPLETED
+                    # ==========================================
+
+                    await websocket.send_text(
+                        "SPEECH_COMPLETED"
+                    )
+
+
+                    # ==========================================
+                    # STATE 4
+                    # READY
+                    # ==========================================
+
+                    await websocket.send_text(
+                        "READY"
+                    )
+
+
+                    print(
+                        "\n🔄 STATE: READY"
+                    )
 
 
                 finally:
@@ -586,14 +515,16 @@ async def websocket_voice(
             # =================================================
 
             elif message in {
+
                 "stop",
                 "exit",
                 "quit",
                 "bye"
+
             }:
 
                 print(
-                    "\n🛑 Stop command received."
+                    "\n🛑 Stop requested."
                 )
 
 
@@ -622,7 +553,7 @@ async def websocket_voice(
 
 
             # =================================================
-            # UNKNOWN COMMAND
+            # UNKNOWN
             # =================================================
 
             else:
@@ -642,10 +573,9 @@ async def websocket_voice(
     except Exception as error:
 
         print(
-            "\n❌ WebSocket error:"
+            "\n❌ WebSocket error:",
+            error
         )
-
-        print(error)
 
 
     finally:
@@ -656,7 +586,7 @@ async def websocket_voice(
 
 
 # ============================================================
-# BROWSER WEBSOCKET TEST PAGE
+# VOICE WEB PAGE
 # ============================================================
 
 @app.get(
@@ -665,91 +595,417 @@ async def websocket_voice(
 )
 def voice_page():
 
-    html = """
+    return HTMLResponse(
+
+        content="""
+
 <!DOCTYPE html>
 
 <html>
 
 <head>
 
-    <title>DesFlyer Voice Assistant</title>
+<meta charset="UTF-8">
 
-    <style>
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
-        body {
-
-            font-family: Arial, sans-serif;
-
-            background: #111;
-
-            color: white;
-
-            text-align: center;
-
-            padding-top: 60px;
-
-        }
+<title>
+DesFlyer Voice Assistant
+</title>
 
 
-        button {
+<style>
 
-            padding: 14px 28px;
+/* ==========================================================
+   GLOBAL
+   ========================================================== */
 
-            margin: 10px;
-
-            font-size: 18px;
-
-            cursor: pointer;
-
-        }
+* {
+    box-sizing: border-box;
+}
 
 
-        #status {
+body {
 
-            margin-top: 30px;
+    margin: 0;
 
-            font-size: 20px;
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
 
-        }
+    background:
+        linear-gradient(
+            135deg,
+            #020617,
+            #0f172a,
+            #111827
+        );
 
+    color: white;
 
-        #output {
+    min-height: 100vh;
 
-            margin: 30px auto;
+    display: flex;
 
-            width: 70%;
+    align-items: center;
 
-            min-height: 100px;
+    justify-content: center;
 
-            max-height: 400px;
-
-            overflow-y: auto;
-
-            padding: 20px;
-
-            background: #222;
-
-            border-radius: 10px;
-
-            text-align: left;
-
-        }
-
-
-        .user {
-
-            margin-bottom: 15px;
-
-        }
+    padding: 25px;
+}
 
 
-        .assistant {
+/* ==========================================================
+   CONTAINER
+   ========================================================== */
 
-            margin-bottom: 20px;
+.container {
 
-        }
+    width: 100%;
 
-    </style>
+    max-width: 850px;
+
+    background: #111827;
+
+    border:
+        1px solid
+        #263244;
+
+    border-radius: 20px;
+
+    padding: 30px;
+
+    box-shadow:
+        0 20px 60px
+        rgba(
+            0,
+            0,
+            0,
+            0.5
+        );
+}
+
+
+/* ==========================================================
+   HEADER
+   ========================================================== */
+
+.header {
+
+    text-align: center;
+
+    margin-bottom: 25px;
+}
+
+
+.header h1 {
+
+    margin: 0;
+
+    font-size: 30px;
+}
+
+
+.header p {
+
+    color: #94a3b8;
+
+    margin-top: 8px;
+}
+
+
+/* ==========================================================
+   STATUS
+   ========================================================== */
+
+.status-card {
+
+    text-align: center;
+
+    background: #020617;
+
+    border:
+        1px solid
+        #263244;
+
+    border-radius: 16px;
+
+    padding: 25px;
+
+    margin-bottom: 25px;
+}
+
+
+#status-icon {
+
+    font-size: 48px;
+
+    margin-bottom: 10px;
+}
+
+
+#status {
+
+    font-size: 25px;
+
+    font-weight: bold;
+}
+
+
+#description {
+
+    margin-top: 8px;
+
+    color: #94a3b8;
+
+    font-size: 14px;
+}
+
+
+/* ==========================================================
+   STATE COLORS
+   ========================================================== */
+
+.status-ready {
+
+    color: #22c55e;
+}
+
+
+.status-listening {
+
+    color: #38bdf8;
+}
+
+
+.status-processing {
+
+    color: #f59e0b;
+}
+
+
+.status-speaking {
+
+    color: #a78bfa;
+}
+
+
+.status-error {
+
+    color: #ef4444;
+}
+
+
+.status-connected {
+
+    color: #60a5fa;
+}
+
+
+.status-disconnected {
+
+    color: #ef4444;
+}
+
+
+/* ==========================================================
+   BUTTONS
+   ========================================================== */
+
+.buttons {
+
+    display: flex;
+
+    justify-content: center;
+
+    gap: 12px;
+
+    flex-wrap: wrap;
+
+    margin-bottom: 25px;
+}
+
+
+button {
+
+    border: none;
+
+    border-radius: 10px;
+
+    padding:
+        13px
+        22px;
+
+    font-size: 16px;
+
+    font-weight: bold;
+
+    cursor: pointer;
+
+    transition: 0.2s;
+}
+
+
+button:hover {
+
+    transform:
+        translateY(-2px);
+}
+
+
+button:disabled {
+
+    opacity: 0.35;
+
+    cursor: not-allowed;
+
+    transform: none;
+}
+
+
+#connectButton {
+
+    background: #2563eb;
+
+    color: white;
+}
+
+
+#startButton {
+
+    background: #16a34a;
+
+    color: white;
+}
+
+
+#stopButton {
+
+    background: #dc2626;
+
+    color: white;
+}
+
+
+/* ==========================================================
+   PIPELINE
+   ========================================================== */
+
+.pipeline {
+
+    display: flex;
+
+    justify-content: center;
+
+    align-items: center;
+
+    gap: 7px;
+
+    flex-wrap: wrap;
+
+    margin-bottom: 25px;
+}
+
+
+.step {
+
+    background: #1e293b;
+
+    color: #94a3b8;
+
+    padding:
+        9px
+        12px;
+
+    border-radius: 8px;
+
+    font-size: 13px;
+}
+
+
+/* ==========================================================
+   CONVERSATION
+   ========================================================== */
+
+.conversation-title {
+
+    font-size: 18px;
+
+    font-weight: bold;
+
+    margin-bottom: 10px;
+}
+
+
+#output {
+
+    background: #020617;
+
+    border:
+        1px solid
+        #263244;
+
+    border-radius: 14px;
+
+    padding: 18px;
+
+    min-height: 180px;
+
+    max-height: 400px;
+
+    overflow-y: auto;
+}
+
+
+.message {
+
+    padding: 12px;
+
+    margin-bottom: 12px;
+
+    border-radius: 10px;
+
+    line-height: 1.5;
+}
+
+
+.user {
+
+    background: #172554;
+
+    border-left:
+        4px solid
+        #3b82f6;
+}
+
+
+.assistant {
+
+    background: #2e1065;
+
+    border-left:
+        4px solid
+        #8b5cf6;
+}
+
+
+.system {
+
+    color: #64748b;
+
+    text-align: center;
+
+    font-size: 13px;
+
+    margin: 8px;
+}
+
+
+</style>
 
 </head>
 
@@ -757,47 +1013,150 @@ def voice_page():
 <body>
 
 
-    <h1>
-        🎙️ DesFlyer Voice Assistant
-    </h1>
+<div class="container">
 
 
-    <p>
-        WebSocket Voice Communication
-    </p>
+    <!-- HEADER -->
+
+    <div class="header">
+
+        <h1>
+            🎙️ DesFlyer Voice Assistant
+        </h1>
+
+        <p>
+            RAG-based Voice Assistant
+        </p>
+
+    </div>
 
 
-    <button onclick="connectWebSocket()">
-        🔌 Connect
-    </button>
+    <!-- STATUS -->
+
+    <div class="status-card">
+
+        <div id="status-icon">
+            🔴
+        </div>
+
+        <div
+            id="status"
+            class="status-disconnected"
+        >
+            Disconnected
+        </div>
+
+        <div id="description">
+            Click Connect to start.
+        </div>
+
+    </div>
 
 
-    <button onclick="startVoice()">
-        🎤 Start Voice
-    </button>
+    <!-- BUTTONS -->
+
+    <div class="buttons">
+
+        <button
+            id="connectButton"
+            onclick="connectWebSocket()"
+        >
+            🔌 Connect
+        </button>
 
 
-    <button onclick="stopVoice()">
-        🛑 Stop
-    </button>
+        <button
+            id="startButton"
+            onclick="startVoice()"
+            disabled
+        >
+            🎤 Start Voice
+        </button>
 
 
-    <div id="status">
-        Disconnected
+        <button
+            id="stopButton"
+            onclick="stopVoice()"
+            disabled
+        >
+            🛑 Stop
+        </button>
+
+    </div>
+
+
+    <!-- PIPELINE -->
+
+    <div class="pipeline">
+
+        <div class="step">
+            🎤 Voice
+        </div>
+
+        <div>
+            →
+        </div>
+
+        <div class="step">
+            📝 STT
+        </div>
+
+        <div>
+            →
+        </div>
+
+        <div class="step">
+            🔎 RAG
+        </div>
+
+        <div>
+            →
+        </div>
+
+        <div class="step">
+            🤖 Gemma
+        </div>
+
+        <div>
+            →
+        </div>
+
+        <div class="step">
+            🔊 TTS
+        </div>
+
+    </div>
+
+
+    <!-- CONVERSATION -->
+
+    <div class="conversation-title">
+
+        Conversation
+
     </div>
 
 
     <div id="output">
 
-        <b>Conversation:</b>
+        <div class="system">
 
-        <br><br>
+            Connect to start.
+
+        </div>
 
     </div>
 
 
+</div>
+
+
 <script>
 
+
+// ============================================================
+// VARIABLES
+// ============================================================
 
 let socket = null;
 
@@ -805,49 +1164,181 @@ let isProcessing = false;
 
 
 // ============================================================
-// STATUS
+// ELEMENTS
 // ============================================================
 
-function setStatus(message) {
-
+const status =
     document.getElementById(
         "status"
-    ).innerText = message;
+    );
+
+const icon =
+    document.getElementById(
+        "status-icon"
+    );
+
+const description =
+    document.getElementById(
+        "description"
+    );
+
+const connectButton =
+    document.getElementById(
+        "connectButton"
+    );
+
+const startButton =
+    document.getElementById(
+        "startButton"
+    );
+
+const stopButton =
+    document.getElementById(
+        "stopButton"
+    );
+
+const output =
+    document.getElementById(
+        "output"
+    );
+
+
+// ============================================================
+// CLEAR CONVERSATION
+// ============================================================
+
+function clearConversation() {
+
+    output.innerHTML = "";
 
 }
 
 
 // ============================================================
-// OUTPUT
+// STATUS
 // ============================================================
 
-function addOutput(
-    message,
-    className = ""
+function setStatus(
+    state,
+    message
 ) {
 
-    const output =
-        document.getElementById(
-            "output"
-        );
+    status.innerText =
+        state;
+
+    description.innerText =
+        message;
 
 
-    const line =
+    status.className = "";
+
+
+    const className =
+        "status-" +
+        state.toLowerCase();
+
+
+    status.classList.add(
+        className
+    );
+
+
+    // --------------------------------------------------------
+    // ICON
+    // --------------------------------------------------------
+
+    if (
+        state === "Disconnected"
+    ) {
+
+        icon.innerText =
+            "🔴";
+
+    }
+
+    else if (
+        state === "Connected"
+    ) {
+
+        icon.innerText =
+            "🔵";
+
+    }
+
+    else if (
+        state === "Ready"
+    ) {
+
+        icon.innerText =
+            "🟢";
+
+    }
+
+    else if (
+        state === "Listening"
+    ) {
+
+        icon.innerText =
+            "🎤";
+
+    }
+
+    else if (
+        state === "Processing"
+    ) {
+
+        icon.innerText =
+            "⚙️";
+
+    }
+
+    else if (
+        state === "Speaking"
+    ) {
+
+        icon.innerText =
+            "🔊";
+
+    }
+
+    else if (
+        state === "Error"
+    ) {
+
+        icon.innerText =
+            "❌";
+
+    }
+
+}
+
+
+// ============================================================
+// ADD MESSAGE
+// ============================================================
+
+function addMessage(
+    text,
+    type
+) {
+
+    const div =
         document.createElement(
             "div"
         );
 
 
-    line.className =
-        className;
+    div.className =
+        "message " +
+        type;
 
 
-    line.innerText =
-        message;
+    div.innerText =
+        text;
 
 
     output.appendChild(
-        line
+        div
     );
 
 
@@ -858,11 +1349,10 @@ function addOutput(
 
 
 // ============================================================
-// CONNECT WEBSOCKET
+// CONNECT
 // ============================================================
 
 function connectWebSocket() {
-
 
     // --------------------------------------------------------
     // Already connected
@@ -870,11 +1360,13 @@ function connectWebSocket() {
 
     if (
         socket &&
-        socket.readyState === WebSocket.OPEN
+        socket.readyState ===
+            WebSocket.OPEN
     ) {
 
         setStatus(
-            "Already connected"
+            "Ready",
+            "WebSocket is already connected."
         );
 
         return;
@@ -883,11 +1375,25 @@ function connectWebSocket() {
 
 
     // --------------------------------------------------------
-    // WebSocket protocol
+    // CLEAR OLD CONVERSATION
+    // --------------------------------------------------------
+
+    clearConversation();
+
+
+    setStatus(
+        "Connected",
+        "Connecting to voice assistant..."
+    );
+
+
+    // --------------------------------------------------------
+    // Determine protocol
     // --------------------------------------------------------
 
     const protocol =
-        window.location.protocol === "https:"
+        window.location.protocol ===
+        "https:"
         ? "wss:"
         : "ws:";
 
@@ -900,13 +1406,13 @@ function connectWebSocket() {
 
 
     console.log(
-        "Connecting to:",
+        "WebSocket URL:",
         wsUrl
     );
 
 
     // --------------------------------------------------------
-    // Create connection
+    // Create WebSocket
     // --------------------------------------------------------
 
     socket =
@@ -921,13 +1427,30 @@ function connectWebSocket() {
 
     socket.onopen = function() {
 
-        setStatus(
-            "🟢 WebSocket Connected"
+        console.log(
+            "✅ WebSocket connected"
         );
 
 
-        addOutput(
-            "🔌 WebSocket connected"
+        connectButton.disabled =
+            true;
+
+        startButton.disabled =
+            false;
+
+        stopButton.disabled =
+            true;
+
+
+        addMessage(
+            "🔌 WebSocket connected",
+            "system"
+        );
+
+
+        setStatus(
+            "Connected",
+            "Connection established. Preparing assistant..."
         );
 
     };
@@ -939,7 +1462,6 @@ function connectWebSocket() {
 
     socket.onmessage = function(event) {
 
-
         const message =
             event.data;
 
@@ -950,93 +1472,109 @@ function connectWebSocket() {
         );
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // CONNECTED
-        // ----------------------------------------------------
+        // ====================================================
 
         if (
             message === "CONNECTED"
         ) {
 
             setStatus(
-                "🟢 Connected"
+                "Connected",
+                "WebSocket connection established."
             );
 
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // READY
-        // ----------------------------------------------------
+        // ====================================================
 
         else if (
             message === "READY"
         ) {
 
-            isProcessing = false;
+            isProcessing =
+                false;
+
+
+            connectButton.disabled =
+                true;
+
+            startButton.disabled =
+                false;
+
+            stopButton.disabled =
+                true;
 
 
             setStatus(
-                "🟢 Ready - Click Start Voice"
+                "Ready",
+                "Click Start Voice to ask a question."
             );
 
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // LISTENING
-        // ----------------------------------------------------
+        // ====================================================
 
         else if (
             message === "LISTENING"
         ) {
 
-            isProcessing = true;
+            isProcessing =
+                true;
+
+
+            startButton.disabled =
+                true;
+
+            stopButton.disabled =
+                false;
 
 
             setStatus(
-                "🎤 Listening..."
+                "Listening",
+                "🎤 I am listening to your voice..."
             );
 
         }
 
 
-        // ----------------------------------------------------
-        // BUSY
-        // ----------------------------------------------------
+        // ====================================================
+        // PROCESSING
+        // ====================================================
 
         else if (
-            message === "BUSY"
+            message === "PROCESSING"
         ) {
 
+            isProcessing =
+                true;
+
+
+            startButton.disabled =
+                true;
+
+            stopButton.disabled =
+                true;
+
+
             setStatus(
-                "⏳ Please wait..."
+                "Processing",
+                "⚙️ Processing your question..."
             );
 
         }
 
 
-        // ----------------------------------------------------
-        // NO SPEECH
-        // ----------------------------------------------------
-
-        else if (
-            message === "NO_SPEECH"
-        ) {
-
-            isProcessing = false;
-
-
-            setStatus(
-                "⚠️ No speech detected"
-            );
-
-        }
-
-
-        // ----------------------------------------------------
-        // USER QUESTION
-        // ----------------------------------------------------
+        // ====================================================
+        // USER
+        // ====================================================
 
         else if (
             message.startsWith(
@@ -1050,7 +1588,7 @@ function connectWebSocket() {
                 );
 
 
-            addOutput(
+            addMessage(
                 "🎤 You: " + text,
                 "user"
             );
@@ -1058,9 +1596,9 @@ function connectWebSocket() {
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // ANSWER
-        // ----------------------------------------------------
+        // ====================================================
 
         else if (
             message.startsWith(
@@ -1074,65 +1612,144 @@ function connectWebSocket() {
                 );
 
 
-            addOutput(
-                "🤖 DesFlyer: " + answer,
+            addMessage(
+                "🤖 DesFlyer: " +
+                answer,
                 "assistant"
             );
 
+        }
+
+
+        // ====================================================
+        // SPEAKING
+        // ====================================================
+
+        else if (
+            message === "SPEAKING"
+        ) {
+
+            isProcessing =
+                true;
+
+
+            startButton.disabled =
+                true;
+
+            stopButton.disabled =
+                true;
+
 
             setStatus(
-                "🔊 Speaking answer..."
+                "Speaking",
+                "🔊 Speaking the answer..."
             );
 
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // SPEECH COMPLETED
-        // ----------------------------------------------------
+        // ====================================================
 
         else if (
-            message === "SPEECH_COMPLETED"
+            message ===
+            "SPEECH_COMPLETED"
         ) {
 
             setStatus(
-                "🔊 Answer completed"
+                "Speaking",
+                "🔊 Answer completed."
             );
 
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
+        // NO SPEECH
+        // ====================================================
+
+        else if (
+            message === "NO_SPEECH"
+        ) {
+
+            isProcessing =
+                false;
+
+
+            setStatus(
+                "Ready",
+                "⚠️ No speech detected. Try again."
+            );
+
+        }
+
+
+        // ====================================================
+        // BUSY
+        // ====================================================
+
+        else if (
+            message === "BUSY"
+        ) {
+
+            setStatus(
+                "Processing",
+                "⏳ Please wait..."
+            );
+
+        }
+
+
+        // ====================================================
         // ERROR
-        // ----------------------------------------------------
+        // ====================================================
 
         else if (
             message === "ERROR"
         ) {
 
-            isProcessing = false;
+            isProcessing =
+                false;
+
+
+            startButton.disabled =
+                false;
+
+            stopButton.disabled =
+                true;
 
 
             setStatus(
-                "❌ Error"
+                "Error",
+                "❌ Something went wrong."
             );
 
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // EXIT
-        // ----------------------------------------------------
+        // ====================================================
 
         else if (
             message === "EXIT"
         ) {
 
-            isProcessing = false;
+            isProcessing =
+                false;
+
+
+            startButton.disabled =
+                true;
+
+            stopButton.disabled =
+                true;
 
 
             setStatus(
-                "👋 Assistant stopped"
+                "Disconnected",
+                "👋 Voice assistant stopped."
             );
 
         }
@@ -1147,13 +1764,28 @@ function connectWebSocket() {
     socket.onerror = function(error) {
 
         console.error(
-            "WebSocket error:",
+            "❌ WebSocket error:",
             error
         );
 
 
+        isProcessing =
+            false;
+
+
+        connectButton.disabled =
+            false;
+
+        startButton.disabled =
+            true;
+
+        stopButton.disabled =
+            true;
+
+
         setStatus(
-            "❌ WebSocket error"
+            "Error",
+            "❌ Could not connect to WebSocket."
         );
 
     };
@@ -1165,20 +1797,33 @@ function connectWebSocket() {
 
     socket.onclose = function() {
 
-        isProcessing = false;
+        console.log(
+            "🔌 WebSocket closed"
+        );
+
+
+        isProcessing =
+            false;
+
+
+        connectButton.disabled =
+            false;
+
+        startButton.disabled =
+            true;
+
+        stopButton.disabled =
+            true;
 
 
         setStatus(
-            "🔴 WebSocket disconnected"
+            "Disconnected",
+            "🔴 WebSocket disconnected. Click Connect to reconnect."
         );
 
 
-        addOutput(
-            "🔌 WebSocket disconnected"
-        );
-
-
-        socket = null;
+        socket =
+            null;
 
     };
 
@@ -1191,14 +1836,15 @@ function connectWebSocket() {
 
 function startVoice() {
 
-
     if (
         !socket ||
-        socket.readyState !== WebSocket.OPEN
+        socket.readyState !==
+            WebSocket.OPEN
     ) {
 
-        alert(
-            "Please connect WebSocket first."
+        setStatus(
+            "Disconnected",
+            "Please click Connect first."
         );
 
         return;
@@ -1209,7 +1855,8 @@ function startVoice() {
     if (isProcessing) {
 
         setStatus(
-            "⏳ Please wait for the current answer."
+            "Processing",
+            "⏳ Please wait for the current request."
         );
 
         return;
@@ -1217,10 +1864,19 @@ function startVoice() {
     }
 
 
-    isProcessing = true;
+    isProcessing =
+        true;
+
+
+    startButton.disabled =
+        true;
+
+    stopButton.disabled =
+        false;
 
 
     setStatus(
+        "Listening",
         "🎤 Starting microphone..."
     );
 
@@ -1238,10 +1894,10 @@ function startVoice() {
 
 function stopVoice() {
 
-
     if (
         socket &&
-        socket.readyState === WebSocket.OPEN
+        socket.readyState ===
+            WebSocket.OPEN
     ) {
 
         socket.send(
@@ -1252,152 +1908,60 @@ function stopVoice() {
 
 }
 
+
 </script>
 
 
 </body>
 
 </html>
+
 """
-
-
-    return HTMLResponse(
-        content=html
     )
 
 
 # ============================================================
-# COMMAND LINE VOICE ASSISTANT
-# ============================================================
-
-def voice_assistant():
-
-    print(
-        "\n===================================="
-    )
-
-    print(
-        "🎙️ DesFlyer Voice Assistant"
-    )
-
-    print(
-        "===================================="
-    )
-
-    print(
-        "🎤 Speak naturally."
-    )
-
-    print(
-        "🤖 I will listen → understand → answer."
-    )
-
-    print(
-        "🔊 The answer will be spoken."
-    )
-
-    print(
-        "🛑 Say 'bye', 'exit' or 'quit' to stop."
-    )
-
-    print(
-        "===================================="
-    )
-
-
-    try:
-
-        while True:
-
-            print(
-                "\n🎤 Waiting for your question..."
-            )
-
-
-            result = process_voice_question()
-
-
-            # =================================================
-            # EMPTY
-            # =================================================
-
-            if result["status"] == "empty":
-
-                continue
-
-
-            # =================================================
-            # ERROR
-            # =================================================
-
-            if result["status"] == "error":
-
-                continue
-
-
-            # =================================================
-            # EXIT
-            # =================================================
-
-            if result["status"] == "exit":
-
-                print(
-                    "\n👋 DesFlyer Voice Assistant stopped."
-                )
-
-                break
-
-
-            # =================================================
-            # SUCCESS
-            # =================================================
-
-            if result["status"] == "success":
-
-                print(
-                    "\n🎤 Ready for next question."
-                )
-
-                time.sleep(
-                    0.5
-                )
-
-
-    except KeyboardInterrupt:
-
-        print(
-            "\n\n🛑 Assistant stopped by user."
-        )
-
-
-    except Exception as error:
-
-        print(
-            "\n❌ Unexpected error:"
-        )
-
-        print(error)
-
-
-    finally:
-
-        print(
-            "\n===================================="
-        )
-
-        print(
-            "🎙️ Voice Assistant Closed"
-        )
-
-        print(
-            "===================================="
-        )
-
-
-# ============================================================
-# COMMAND LINE
+# START SERVER
 # ============================================================
 
 if __name__ == "__main__":
 
-    voice_assistant()
+    print("\n====================================")
+    print("🎙️ DesFlyer Voice Assistant Server")
+    print("====================================")
+
+    print(
+        "🌐 Open in browser:"
+    )
+
+    print(
+        "👉 http://127.0.0.1:8000/voice"
+    )
+
+    print(
+        "\n🔌 WebSocket:"
+    )
+
+    print(
+        "👉 ws://127.0.0.1:8000/ws/voice"
+    )
+
+    print(
+        "\n🚀 Starting Uvicorn..."
+    )
+
+    print(
+        "====================================\n"
+    )
+
+
+    uvicorn.run(
+
+        app,
+
+        host="127.0.0.1",
+
+        port=8000,
+
+        reload=False
+    )

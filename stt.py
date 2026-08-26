@@ -14,12 +14,16 @@ from faster_whisper import WhisperModel
 # ============================================================
 
 SAMPLE_RATE = 16000
-FRAME_SIZE = 480                  # 30 ms
+
+# 30 ms frame
+FRAME_SIZE = 480
+
 
 # ============================================================
 # WEBRTC VAD
 # ============================================================
 
+# 2 = balanced speech detection
 VAD_MODE = 2
 
 vad = webrtcvad.Vad(VAD_MODE)
@@ -29,12 +33,27 @@ vad = webrtcvad.Vad(VAD_MODE)
 # SPEECH DETECTION
 # ============================================================
 
-REQUIRED_SPEECH_FRAMES = 10
+# Reduced from 10 -> 6.
+# 6 x 30 ms = 180 ms.
+#
+# This helps prevent short words at the beginning
+# from being missed.
+REQUIRED_SPEECH_FRAMES = 6
 
-SILENCE_LIMIT = 40
 
+# 30 x 30 ms = 0.9 seconds.
+#
+# Reduced from 1.2 sec so short questions can finish
+# without unnecessary waiting.
+SILENCE_LIMIT = 30
+
+
+# Waiting time for user to start speaking.
+# 100 x 100 ms = approximately 10 seconds.
 WAITING_LIMIT = 100
 
+
+# 500 x 30 ms = approximately 15 seconds.
 MAX_RECORDING_FRAMES = 500
 
 
@@ -42,11 +61,11 @@ MAX_RECORDING_FRAMES = 500
 # MICROPHONE
 # ============================================================
 
-BASE_RMS_THRESHOLD = 500
+BASE_RMS_THRESHOLD = 400
 
-NOISE_MULTIPLIER = 2.5
+NOISE_MULTIPLIER = 2.2
 
-MIN_RMS_THRESHOLD = 700
+MIN_RMS_THRESHOLD = 550
 
 MAX_RMS_THRESHOLD = 3000
 
@@ -55,26 +74,26 @@ MAX_RMS_THRESHOLD = 3000
 # AUDIO VALIDATION
 # ============================================================
 
-MIN_AUDIO_DURATION = 0.7
+MIN_AUDIO_DURATION = 0.45
 
-MIN_VOICED_RATIO = 0.15
+MIN_VOICED_RATIO = 0.10
 
-MIN_SPEECH_FRAMES = 8
+MIN_SPEECH_FRAMES = 5
 
 MAX_TEXT_LENGTH = 250
 
 
 # ============================================================
-# WHISPER
+# WHISPER VALIDATION
 # ============================================================
 
-MAX_NO_SPEECH_PROB = 0.70
+MAX_NO_SPEECH_PROB = 0.75
 
-MAX_COMPRESSION_RATIO = 2.4
+MAX_COMPRESSION_RATIO = 3.0
 
 
 # ============================================================
-# LOAD WHISPER MODEL
+# WHISPER MODEL
 # ============================================================
 
 print("\n===================================")
@@ -89,11 +108,16 @@ try:
         compute_type="int8"
     )
 
-    print("✅ Faster-Whisper model loaded successfully.")
+    print(
+        "✅ Faster-Whisper model loaded successfully."
+    )
 
 except Exception as error:
 
-    print("❌ Could not load Faster-Whisper:")
+    print(
+        "❌ Could not load Faster-Whisper:"
+    )
+
     print(error)
 
     raise
@@ -104,6 +128,9 @@ except Exception as error:
 # ============================================================
 
 def normalize_text(text):
+
+    if not text:
+        return ""
 
     text = text.lower().strip()
 
@@ -137,15 +164,6 @@ def is_exit_command(text):
 
     words = normalized.split()
 
-    exit_words = {
-        "bye",
-        "goodbye",
-        "exit",
-        "quit",
-        "stop",
-        "close"
-    }
-
     exact_commands = {
         "bye",
         "goodbye",
@@ -162,19 +180,15 @@ def is_exit_command(text):
 
     if len(words) <= 6:
 
-        if words[-1] in exit_words:
-            return True
-
-    if len(words) >= 2:
-
-        last_two = " ".join(
-            words[-2:]
-        )
-
-        if last_two in {
-            "good bye",
-            "bye bye"
+        if words[-1] in {
+            "bye",
+            "goodbye",
+            "exit",
+            "quit",
+            "stop",
+            "close"
         }:
+
             return True
 
     return False
@@ -188,7 +202,10 @@ def correct_desflyer_words(text):
 
     corrections = {
 
-        # Common Whisper mistakes
+        # ----------------------------------------------------
+        # Common Faster-Whisper variations
+        # ----------------------------------------------------
+
         "this player": "DesFlyer",
         "desk player": "DesFlyer",
         "desk flyer": "DesFlyer",
@@ -201,7 +218,12 @@ def correct_desflyer_words(text):
         "desk flier": "DesFlyer",
         "death flyer": "DesFlyer",
         "death player": "DesFlyer",
-        "des player": "DesFlyer"
+        "des player": "DesFlyer",
+
+        # Common variations
+        "desflyer": "DesFlyer",
+        "des flyers": "DesFlyer",
+        "desflyers": "DesFlyer",
 
     }
 
@@ -215,6 +237,127 @@ def correct_desflyer_words(text):
         )
 
     return text
+
+
+# ============================================================
+# DOMAIN WORD NORMALIZATION
+# ============================================================
+
+def correct_domain_terms(text):
+
+    replacements = {
+
+        # ----------------------------------------------------
+        # Website
+        # ----------------------------------------------------
+
+        "web site": "website",
+        "web sites": "websites",
+
+        # ----------------------------------------------------
+        # Mobile applications
+        # ----------------------------------------------------
+
+        "mobile app": "mobile application",
+        "mobile apps": "mobile applications",
+
+        # ----------------------------------------------------
+        # Database
+        # ----------------------------------------------------
+
+        "data base": "database",
+        "data bases": "databases",
+        "data basis": "databases",
+
+        # ----------------------------------------------------
+        # iOS
+        # ----------------------------------------------------
+
+        "i os": "iOS",
+        "ios": "iOS",
+
+        # ----------------------------------------------------
+        # Android
+        # ----------------------------------------------------
+
+        "android": "Android",
+
+        # ----------------------------------------------------
+        # Responsive
+        # ----------------------------------------------------
+
+        "responsive": "responsive",
+
+        # ----------------------------------------------------
+        # DesFlyer
+        # ----------------------------------------------------
+
+        "des flyer": "DesFlyer",
+        "desk flyer": "DesFlyer",
+        "desk player": "DesFlyer",
+
+    }
+
+    for wrong, correct in replacements.items():
+
+        text = re.sub(
+            rf"\b{re.escape(wrong)}\b",
+            correct,
+            text,
+            flags=re.IGNORECASE
+        )
+
+    return text
+
+
+# ============================================================
+# REMOVE EXCESSIVE WORD REPETITION
+# ============================================================
+
+def remove_repeated_words(text):
+
+    words = text.split()
+
+    if not words:
+        return text
+
+    cleaned_words = []
+
+    previous_word = None
+    repeat_count = 0
+
+    for word in words:
+
+        current_word = word.lower()
+
+        if (
+            previous_word is not None
+            and current_word == previous_word
+        ):
+
+            repeat_count += 1
+
+            # Remove only excessive repetition.
+            #
+            # Example:
+            # "web development web development"
+            #
+            # becomes:
+            # "web development"
+            if repeat_count >= 2:
+                continue
+
+        else:
+
+            repeat_count = 0
+
+        cleaned_words.append(word)
+
+        previous_word = current_word
+
+    return " ".join(
+        cleaned_words
+    ).strip()
 
 
 # ============================================================
@@ -272,7 +415,15 @@ def calibrate_microphone():
 
     if not rms_values:
 
+        print(
+            "⚠️ Could not measure background noise."
+        )
+
         return BASE_RMS_THRESHOLD
+
+    # --------------------------------------------------------
+    # Noise floor
+    # --------------------------------------------------------
 
     noise_floor = float(
         np.percentile(
@@ -280,6 +431,10 @@ def calibrate_microphone():
             80
         )
     )
+
+    # --------------------------------------------------------
+    # Dynamic threshold
+    # --------------------------------------------------------
 
     dynamic_threshold = max(
         BASE_RMS_THRESHOLD,
@@ -341,7 +496,7 @@ def is_reliable_transcription(
         return False
 
     # --------------------------------------------------------
-    # No speech probability
+    # No-speech probability
     # --------------------------------------------------------
 
     no_speech_probs = [
@@ -353,9 +508,7 @@ def is_reliable_transcription(
     if no_speech_probs:
 
         average_no_speech = float(
-            np.mean(
-                no_speech_probs
-            )
+            np.mean(no_speech_probs)
         )
 
         print(
@@ -416,58 +569,19 @@ def is_reliable_transcription(
 
 
 # ============================================================
-# REMOVE EXCESSIVE WORD REPETITION
-# ============================================================
-
-def remove_repeated_words(text):
-
-    words = text.split()
-
-    if not words:
-        return text
-
-    cleaned_words = []
-
-    previous_word = None
-    repeat_count = 0
-
-    for word in words:
-
-        current_word = word.lower()
-
-        if (
-            previous_word is not None
-            and current_word == previous_word
-        ):
-
-            repeat_count += 1
-
-            if repeat_count >= 2:
-                continue
-
-        else:
-
-            repeat_count = 0
-
-        cleaned_words.append(
-            word
-        )
-
-        previous_word = current_word
-
-    return " ".join(
-        cleaned_words
-    ).strip()
-
-
-# ============================================================
 # SPEECH TO TEXT
 # ============================================================
 
 def speech_to_text():
 
     print("\n🎤 Speak now...")
-    print("⏳ I am listening. Take your time...")
+    print(
+        "⏳ I am listening. Take your time..."
+    )
+
+    # --------------------------------------------------------
+    # Calibrate microphone
+    # --------------------------------------------------------
 
     speech_threshold = calibrate_microphone()
 
@@ -482,8 +596,17 @@ def speech_to_text():
     total_recording_frames = 0
     actual_speech_frames = 0
 
+    # ========================================================
+    # PRE-BUFFER
+    # ========================================================
+
+    # 20 frames x 30 ms = 600 ms.
+    #
+    # This is important.
+    # It preserves the first part of a sentence before
+    # speech detection becomes active.
     pre_buffer = deque(
-        maxlen=10
+        maxlen=20
     )
 
     # ========================================================
@@ -531,7 +654,7 @@ def speech_to_text():
         )
 
         # ----------------------------------------------------
-        # VAD
+        # WebRTC VAD
         # ----------------------------------------------------
 
         try:
@@ -570,7 +693,16 @@ def speech_to_text():
 
             else:
 
-                consecutive_speech_frames = 0
+                # Don't immediately reset.
+                #
+                # This allows small gaps between words.
+                if consecutive_speech_frames > 0:
+
+                    consecutive_speech_frames -= 1
+
+            # ------------------------------------------------
+            # Confirm speech
+            # ------------------------------------------------
 
             if (
                 consecutive_speech_frames
@@ -586,6 +718,13 @@ def speech_to_text():
                 print(
                     "👂 Listening..."
                 )
+
+                # ------------------------------------------------
+                # Add pre-buffer.
+                #
+                # The first words may have started before
+                # speech detection was confirmed.
+                # ------------------------------------------------
 
                 for frame in pre_buffer:
 
@@ -659,6 +798,10 @@ def speech_to_text():
                         "\n⏳ No speech detected."
                     )
 
+                    print(
+                        "🎤 Please speak when ready."
+                    )
+
                     return ""
 
             # ------------------------------------------------
@@ -669,6 +812,8 @@ def speech_to_text():
 
                 sd.sleep(100)
 
+                # Stop after approximately
+                # 0.9 seconds of silence.
                 if silence_count >= SILENCE_LIMIT:
 
                     print(
@@ -677,6 +822,7 @@ def speech_to_text():
 
                     break
 
+                # Maximum recording duration.
                 if (
                     total_recording_frames
                     >= MAX_RECORDING_FRAMES
@@ -689,6 +835,10 @@ def speech_to_text():
                     break
 
     except KeyboardInterrupt:
+
+        print(
+            "\n🛑 Recording interrupted."
+        )
 
         raise
 
@@ -815,7 +965,7 @@ def speech_to_text():
         return ""
 
     # ========================================================
-    # WHISPER
+    # WHISPER TRANSCRIPTION
     # ========================================================
 
     print(
@@ -828,27 +978,68 @@ def speech_to_text():
 
             "input.wav",
 
-            beam_size=3,
+            # ------------------------------------------------
+            # Beam search
+            # ------------------------------------------------
+
+            beam_size=5,
+
+            best_of=5,
 
             language="en",
 
+            # ------------------------------------------------
+            # Domain vocabulary
+            # ------------------------------------------------
+
             initial_prompt=(
-                "DesFlyer, website development, "
-                "mobile applications, software development, "
-                "business, services, projects."
+                "This is a DesFlyer company FAQ conversation. "
+                "DesFlyer provides software development, "
+                "website development, web development, "
+                "mobile application development, "
+                "Android and iOS application development, "
+                "responsive websites, databases, "
+                "custom software solutions, "
+                "business solutions, startups, clients, "
+                "projects, services, UI and UX. "
+                "Important words include: "
+                "DesFlyer, website, websites, "
+                "web development, software development, "
+                "mobile application, mobile applications, "
+                "Android, iOS, database, databases, "
+                "responsive, scalable, custom, "
+                "service, services, client, clients. "
+                "Questions may contain short words such as "
+                "what, which, who, where, when, why, how, "
+                "can, could, do, does, is, are, they, them, "
+                "their, it, this, that, these, those."
             ),
 
+            # ------------------------------------------------
+            # IMPORTANT
+            # ------------------------------------------------
+            #
+            # Do not let Whisper depend on previous
+            # transcription because this can cause it to
+            # continue or hallucinate previous words.
+            #
             condition_on_previous_text=False,
 
             temperature=0.0,
 
-            vad_filter=True,
+            # ------------------------------------------------
+            # Whisper VAD disabled here.
+            #
+            # We already perform speech detection using
+            # WebRTC VAD before sending the audio.
+            #
+            # Applying a second aggressive VAD can remove
+            # short words.
+            # ------------------------------------------------
 
-            vad_parameters={
-                "min_silence_duration_ms": 500
-            },
+            vad_filter=False,
 
-            no_speech_threshold=0.60,
+            no_speech_threshold=0.70,
 
             log_prob_threshold=-1.5,
 
@@ -872,10 +1063,12 @@ def speech_to_text():
 
                 continue
 
-            if segment.text.strip():
+            segment_text = segment.text.strip()
+
+            if segment_text:
 
                 text_parts.append(
-                    segment.text.strip()
+                    segment_text
                 )
 
         text = " ".join(
@@ -917,15 +1110,27 @@ def speech_to_text():
         text
     ).strip()
 
+    # --------------------------------------------------------
+    # Remove excessive repeated words
+    # --------------------------------------------------------
+
     text = remove_repeated_words(
         text
     )
 
-    # ========================================================
-    # DESFLYER CORRECTION
-    # ========================================================
+    # --------------------------------------------------------
+    # DesFlyer correction
+    # --------------------------------------------------------
 
     text = correct_desflyer_words(
+        text
+    )
+
+    # --------------------------------------------------------
+    # Domain corrections
+    # --------------------------------------------------------
+
+    text = correct_domain_terms(
         text
     )
 
@@ -947,7 +1152,7 @@ def speech_to_text():
         return ""
 
     # ========================================================
-    # DISPLAY
+    # FINAL TEXT
     # ========================================================
 
     print(
@@ -972,7 +1177,44 @@ def speech_to_text():
         return "__EXIT__"
 
     # ========================================================
-    # RETURN ONLY TEXT
+    # RETURN TEXT TO APP.PY
     # ========================================================
 
     return text
+
+
+# ============================================================
+# TEST STT
+# ============================================================
+
+if __name__ == "__main__":
+
+    print("\n===================================")
+    print("🎙️ STT TEST")
+    print("===================================")
+
+    while True:
+
+        text = speech_to_text()
+
+        if text == "__EXIT__":
+
+            print(
+                "\n👋 STT test stopped."
+            )
+
+            break
+
+        if text:
+
+            print(
+                "\n✅ FINAL TRANSCRIPTION:"
+            )
+
+            print(text)
+
+        else:
+
+            print(
+                "\n⚠️ No valid speech detected."
+            )
