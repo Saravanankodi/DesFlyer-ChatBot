@@ -1,29 +1,44 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import os
 
-MODEL_ID = "google/gemma-2-2b-it"
+# ============================================================
+# MODEL
+# ============================================================
+
+MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+
+DEVICE = "cpu"
+
+# ============================================================
+# CPU SETTINGS
+# ============================================================
+
+CPU_CORES = os.cpu_count() or 1
+
+# Keep CPU usage controlled
+CPU_THREADS = min(4, CPU_CORES)
+
+torch.set_num_threads(CPU_THREADS)
+
+try:
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    pass
+
+
+# ============================================================
+# MODEL LOADING
+# ============================================================
 
 print("\n====================================")
-print("Loading Gemma 2B")
+print("Loading Qwen2.5-1.5B-Instruct")
 print("====================================")
 
-# ============================================================
-# DEVICE
-# ============================================================
-
-if torch.cuda.is_available():
-
-    DEVICE = "cuda"
-
-    print("✅ CUDA GPU detected")
-    print("GPU:", torch.cuda.get_device_name(0))
-
-else:
-
-    DEVICE = "cpu"
-
-    print("⚠️ CUDA GPU not available")
-    print("Using CPU")
+print("Model:", MODEL_ID)
+print("Device:", DEVICE)
+print("CPU cores:", CPU_CORES)
+print("CPU threads:", CPU_THREADS)
 
 
 # ============================================================
@@ -36,6 +51,8 @@ tokenizer = AutoTokenizer.from_pretrained(
     MODEL_ID
 )
 
+print("✅ Tokenizer loaded")
+
 
 # ============================================================
 # MODEL
@@ -43,49 +60,33 @@ tokenizer = AutoTokenizer.from_pretrained(
 
 print("\nLoading model...")
 
-if DEVICE == "cuda":
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    dtype=torch.float32,
+    low_cpu_mem_usage=True
+)
 
-    model = AutoModelForCausalLM.from_pretrained(
-
-        MODEL_ID,
-
-        torch_dtype=torch.float16,
-
-        device_map="cuda",
-
-        low_cpu_mem_usage=True
-
-    )
-
-else:
-
-    model = AutoModelForCausalLM.from_pretrained(
-
-        MODEL_ID,
-
-        torch_dtype=torch.float32
-
-    )
-
-    model = model.to("cpu")
-
-
-# ============================================================
-# EVALUATION MODE
-# ============================================================
+model = model.to(DEVICE)
 
 model.eval()
 
 
 # ============================================================
-# MODEL INFORMATION
+# INFERENCE SETTINGS
+# ============================================================
+
+model.config.use_cache = True
+
+torch.set_grad_enabled(False)
+
+
+# ============================================================
+# INFORMATION
 # ============================================================
 
 print("\n====================================")
-print("Gemma 2B Loaded Successfully!")
+print("Qwen2.5-1.5B-Instruct Loaded Successfully!")
 print("====================================")
-
-print("Device:", DEVICE)
 
 print(
     "Model device:",
@@ -97,24 +98,25 @@ print(
     next(model.parameters()).dtype
 )
 
-if torch.cuda.is_available():
+print(
+    "CPU threads:",
+    torch.get_num_threads()
+)
 
-    print(
-        "GPU memory allocated:",
-        round(
-            torch.cuda.memory_allocated() / 1024**3,
-            2
-        ),
-        "GB"
+try:
+
+    parameter_count = sum(
+        p.numel()
+        for p in model.parameters()
     )
 
     print(
-        "GPU memory reserved:",
-        round(
-            torch.cuda.memory_reserved() / 1024**3,
-            2
-        ),
-        "GB"
+        "Parameters:",
+        f"{parameter_count / 1e6:.0f} Million"
     )
+
+except Exception:
+
+    pass
 
 print("====================================\n")
