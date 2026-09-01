@@ -28,6 +28,11 @@ MAX_HISTORY_CHARS = 700
 
 ANSWER_MAX_NEW_TOKENS = 32
 
+# Closing questions are handled here.
+# IMPORTANT:
+# Do not append another closing question in the WebSocket code.
+ADD_CLOSING_QUESTION = True
+
 
 # ============================================================
 # CPU SETTINGS
@@ -374,25 +379,64 @@ def normalize_text(text):
 
     text = text.lower()
 
-    # Normalize common STT variation
-    text = text.replace(
-        "des flyer",
-        "desflyer"
-    )
+    # --------------------------------------------------------
+    # Common Faster-Whisper / STT variations
+    # --------------------------------------------------------
 
+    stt_replacements = {
+
+        "des flyer": "desflyer",
+
+        "des flyer company": "desflyer",
+
+        "des flyer companys": "desflyer",
+
+        "destroyer": "desflyer",
+
+        "destroy a": "desflyer",
+
+        "destroyer provide": "desflyer provide",
+
+        "destroy a provide": "desflyer provide",
+
+        "destroy a develop": "desflyer develop",
+
+        "display": "desflyer",
+
+        "display flyer": "desflyer",
+
+    }
+
+
+    for wrong, correct in stt_replacements.items():
+
+        text = text.replace(
+            wrong,
+            correct
+        )
+
+
+    # --------------------------------------------------------
     # Remove punctuation
+    # --------------------------------------------------------
+
     text = re.sub(
         r"[^\w\s]",
         " ",
         text
     )
 
+
+    # --------------------------------------------------------
     # Normalize spaces
+    # --------------------------------------------------------
+
     text = re.sub(
         r"\s+",
         " ",
         text
     )
+
 
     return text.strip()
 
@@ -476,6 +520,7 @@ DESFLYER_KEYWORDS = [
 
     "ui",
     "ux",
+    "ui ux",
 
     "startup",
     "startups",
@@ -497,6 +542,7 @@ DESFLYER_KEYWORDS = [
 
     "android",
     "ios",
+    "iphone",
 
     "platform",
     "platforms",
@@ -552,6 +598,12 @@ def is_desflyer_question(question):
 
         ("software", "development"),
 
+        ("software", "solution"),
+
+        ("software", "provide"),
+
+        ("software", "offer"),
+
         ("website", "develop"),
 
         ("website", "build"),
@@ -559,6 +611,8 @@ def is_desflyer_question(question):
         ("website", "create"),
 
         ("website", "database"),
+
+        ("website", "redesign"),
 
         ("mobile", "application"),
 
@@ -576,7 +630,15 @@ def is_desflyer_question(question):
 
         ("services", "provide"),
 
-        ("redesign", "website")
+        ("ui", "ux"),
+
+        ("custom", "software"),
+
+        ("customized", "software"),
+
+        ("platform", "mobile"),
+
+        ("platforms", "mobile")
 
     ]
 
@@ -626,7 +688,9 @@ def is_desflyer_question(question):
 
         "mobile app",
 
-        "android support"
+        "android support",
+
+        "ios support"
 
     ]
 
@@ -669,9 +733,113 @@ FAST_FAQ = {
         "Yes, DesFlyer develops mobile applications for Android.",
 
     "ios":
-        "Yes, DesFlyer develops mobile applications for iOS."
+        "Yes, DesFlyer develops mobile applications for iOS.",
+
+    "platforms":
+        "DesFlyer supports mobile application development for both Android and iOS platforms.",
+
+    "uiux":
+        "Yes, DesFlyer provides UI/UX design services.",
+
+    "custom_software":
+        "Yes, DesFlyer can develop customized software solutions.",
+
+    "responsive":
+        "Yes, DesFlyer develops responsive applications that work across desktops, tablets, and mobile devices when applicable."
 
 }
+
+
+# ============================================================
+# CONTEXT-AWARE CLOSING QUESTIONS
+# ============================================================
+
+CLOSING_QUESTIONS = {
+
+    "services":
+        "Would you like details about a specific DesFlyer service?",
+
+    "website":
+        "Would you like to know more about DesFlyer's website development?",
+
+    "website_database":
+        "Would you like to know more about DesFlyer's website and database services?",
+
+    "redesign":
+        "Would you like to know more about website redesign services?",
+
+    "mobile":
+        "Would you like to know more about DesFlyer's mobile application services?",
+
+    "android":
+        "Would you like to know more about DesFlyer's Android application development?",
+
+    "ios":
+        "Would you like to know more about DesFlyer's iOS application development?",
+
+    "platforms":
+        "Would you like details about Android or iOS development?",
+
+    "uiux":
+        "Would you like to know more about DesFlyer's UI/UX design services?",
+
+    "custom_software":
+        "Would you like to know more about DesFlyer's customized software solutions?",
+
+    "responsive":
+        "Would you like to know more about DesFlyer's responsive application development?",
+
+    "offer":
+        "Would you like details about a specific DesFlyer service?"
+
+}
+
+
+# ============================================================
+# ADD CLOSING QUESTION
+# ============================================================
+
+def add_closing_question(
+    answer,
+    closing_type=None
+):
+
+    if not ADD_CLOSING_QUESTION:
+
+        return answer
+
+
+    if not answer:
+
+        return answer
+
+
+    closing = CLOSING_QUESTIONS.get(
+        closing_type
+    )
+
+
+    if not closing:
+
+        closing = (
+            "Is there anything else you would like to know about DesFlyer?"
+        )
+
+
+    # --------------------------------------------------------
+    # Avoid duplicate closing questions
+    # --------------------------------------------------------
+
+    if answer.endswith("?"):
+
+        return answer
+
+
+    return (
+        answer.rstrip(". ")
+        + ". "
+        + closing
+    )
 
 
 # ============================================================
@@ -683,6 +851,100 @@ def get_fast_faq_answer(question):
     q = normalize_text(
         question
     )
+
+
+    # ========================================================
+    # UI / UX
+    # ========================================================
+
+    uiux_patterns = [
+
+        "ui ux",
+
+        "uiux",
+
+        "ui design",
+
+        "ux design",
+
+        "user interface",
+
+        "user experience",
+
+        "ui and ux",
+
+        "ux and ui",
+
+        "ui or ux",
+
+        "ux or ui",
+
+        "ui ux design",
+
+        "does desflyer provide ui",
+
+        "does desflyer provide ux",
+
+        "does desflyer provide ui ux",
+
+        "desflyer ui",
+
+        "desflyer ux"
+
+    ]
+
+
+    for pattern in uiux_patterns:
+
+        if pattern in q:
+
+            return (
+                FAST_FAQ["uiux"],
+                "uiux"
+            )
+
+
+    # ========================================================
+    # CUSTOMIZED SOFTWARE
+    # ========================================================
+
+    customized_patterns = [
+
+        "custom software",
+
+        "customized software",
+
+        "customised software",
+
+        "custom solution",
+
+        "customized solution",
+
+        "customised solution",
+
+        "custom software development",
+
+        "customized software development",
+
+        "customised software development",
+
+        "can desflyer develop customized software",
+
+        "can desflyer develop custom software",
+
+        "does desflyer provide customized software"
+
+    ]
+
+
+    for pattern in customized_patterns:
+
+        if pattern in q:
+
+            return (
+                FAST_FAQ["custom_software"],
+                "custom_software"
+            )
 
 
     # ========================================================
@@ -701,11 +963,15 @@ def get_fast_faq_answer(question):
 
         "what software solutions",
 
+        "what kind of software",
+
         "desflyer offer",
 
         "desflyer provide",
 
         "desflyer services",
+
+        "what service does desflyer provide",
 
         "what services does desflyer provide",
 
@@ -716,6 +982,10 @@ def get_fast_faq_answer(question):
         "which services does desflyer offer",
 
         "services does desflyer provide",
+
+        "services does desflyer offer",
+
+        "what kind of services",
 
         "enna service provide",
 
@@ -738,7 +1008,10 @@ def get_fast_faq_answer(question):
 
         if pattern in q:
 
-            return FAST_FAQ["services"]
+            return (
+                FAST_FAQ["services"],
+                "services"
+            )
 
 
     # ========================================================
@@ -746,12 +1019,87 @@ def get_fast_faq_answer(question):
     # ========================================================
 
     if (
+
         "what does desflyer offer" in q
+
         or
+
         "what kind of software" in q
+
+        or
+
+        "what software solutions" in q
+
     ):
 
-        return FAST_FAQ["offer"]
+        return (
+            FAST_FAQ["offer"],
+            "offer"
+        )
+
+
+    # ========================================================
+    # WEBSITE + DATABASE
+    # ========================================================
+
+    has_website = (
+
+        "website" in q
+
+        or
+
+        "websites" in q
+
+        or
+
+        "web" in q
+
+    )
+
+
+    has_database = (
+
+        "database" in q
+
+        or
+
+        "databases" in q
+
+    )
+
+
+    if has_website and has_database:
+
+        return (
+            FAST_FAQ["website_database"],
+            "website_database"
+        )
+
+
+    # ========================================================
+    # WEBSITE REDESIGN
+    # ========================================================
+
+    if (
+
+        "redesign" in q
+
+        and
+
+        (
+            "website" in q
+            or
+            "websites" in q
+            or
+            "web" in q
+        )
+
+    ):
+
+        return (
+            FAST_FAQ["redesign"],
+            "redesign"
+        )
 
 
     # ========================================================
@@ -801,69 +1149,10 @@ def get_fast_faq_answer(question):
 
         if pattern in q:
 
-            return FAST_FAQ["website"]
-
-
-    # ========================================================
-    # WEBSITE + DATABASE
-    # ========================================================
-
-    has_website = (
-
-        "website" in q
-
-        or
-
-        "websites" in q
-
-        or
-
-        "web" in q
-
-    )
-
-
-    has_database = (
-
-        "database" in q
-
-        or
-
-        "databases" in q
-
-    )
-
-
-    if has_website and has_database:
-
-        return FAST_FAQ[
-            "website_database"
-        ]
-
-
-    # ========================================================
-    # WEBSITE REDESIGN
-    # ========================================================
-
-    if (
-
-        "redesign" in q
-
-        and
-
-        (
-            "website" in q
-            or
-            "websites" in q
-            or
-            "web" in q
-        )
-
-    ):
-
-        return FAST_FAQ[
-            "redesign"
-        ]
+            return (
+                FAST_FAQ["website"],
+                "website"
+            )
 
 
     # ========================================================
@@ -914,36 +1203,61 @@ def get_fast_faq_answer(question):
 
     if has_mobile and has_development_word:
 
-        return FAST_FAQ[
+        return (
+            FAST_FAQ["mobile"],
             "mobile"
-        ]
+        )
 
 
     # ========================================================
-    # MOBILE TAMIL / TANGLISH
+    # ANDROID + IOS TOGETHER
     # ========================================================
 
-    if (
+    has_android = "android" in q
 
-        "mobile app develop pannuvanga" in q
-
+    has_ios = (
+        "ios" in q
         or
+        "iphone" in q
+    )
 
-        "mobile app develop pannuvangala" in q
 
-        or
+    if has_android and has_ios:
 
-        "mobile develop pannuvanga" in q
+        if (
 
-        or
+            "platform" in q
 
-        "mobile application develop" in q
+            or
 
-    ):
+            "platforms" in q
 
-        return FAST_FAQ[
-            "mobile"
-        ]
+            or
+
+            "support" in q
+
+            or
+
+            "application" in q
+
+            or
+
+            "app" in q
+
+            or
+
+            "mobile" in q
+
+            or
+
+            "develop" in q
+
+        ):
+
+            return (
+                FAST_FAQ["platforms"],
+                "platforms"
+            )
 
 
     # ========================================================
@@ -976,18 +1290,31 @@ def get_fast_faq_answer(question):
 
             "build" in q
 
+            or
+
+            "platform" in q
+
         ):
 
-            return FAST_FAQ[
+            return (
+                FAST_FAQ["android"],
                 "android"
-            ]
+            )
 
 
     # ========================================================
     # IOS
     # ========================================================
 
-    if "ios" in q:
+    if (
+
+        "ios" in q
+
+        or
+
+        "iphone" in q
+
+    ):
 
         if (
 
@@ -1015,13 +1342,48 @@ def get_fast_faq_answer(question):
 
             or
 
+            "platform" in q
+
+            or
+
             "desflyer" in q
 
         ):
 
-            return FAST_FAQ[
+            return (
+                FAST_FAQ["ios"],
                 "ios"
-            ]
+            )
+
+
+    # ========================================================
+    # RESPONSIVE
+    # ========================================================
+
+    if (
+
+        "responsive" in q
+
+        and
+
+        (
+            "website" in q
+            or
+            "websites" in q
+            or
+            "application" in q
+            or
+            "app" in q
+            or
+            "mobile" in q
+        )
+
+    ):
+
+        return (
+            FAST_FAQ["responsive"],
+            "responsive"
+        )
 
 
     return None
@@ -1183,14 +1545,6 @@ def normalize_follow_up(question):
 
     # ========================================================
     # WHAT ABOUT / HOW ABOUT
-    #
-    # Example:
-    #
-    # "What about iOS?"
-    #
-    # becomes:
-    #
-    # "What about DesFlyer iOS?"
     # ========================================================
 
     clean_after_pronouns = normalize_text(
@@ -1199,52 +1553,85 @@ def normalize_follow_up(question):
 
 
     if (
-        clean_after_pronouns.startswith("what about ")
+
+        clean_after_pronouns.startswith(
+            "what about "
+        )
+
         or
-        clean_after_pronouns.startswith("how about ")
+
+        clean_after_pronouns.startswith(
+            "how about "
+        )
+
     ):
 
         if "desflyer" not in clean_after_pronouns:
 
-            q = (
-                "What about DesFlyer "
-                + q[
+            if "what about " in clean_after_pronouns:
+
+                remaining = q[
                     q.lower().find("about") + 5:
                 ].strip()
+
+            else:
+
+                remaining = q[
+                    q.lower().find("about") + 5:
+                ].strip()
+
+
+            # ------------------------------------------------
+            # Important:
+            #
+            # "What about iOS?"
+            #
+            # becomes:
+            #
+            # "DesFlyer iOS?"
+            #
+            # not:
+            #
+            # "What about DesFlyer iOS?"
+            #
+            # This makes the FAQ matcher focus on iOS.
+            # ------------------------------------------------
+
+            q = (
+                "DesFlyer "
+                + remaining
             )
 
 
     # ========================================================
     # SHORT FOLLOW-UP
-    #
-    # Example:
-    #
-    # Previous:
-    # "Does DesFlyer develop mobile applications?"
-    #
-    # User:
-    # "Android."
-    #
-    # becomes:
-    #
-    # "DesFlyer Android."
     # ========================================================
 
     clean_after = normalize_text(
         q
     )
 
+
     short_follow_up_words = {
 
         "android",
+
         "ios",
+
         "iphone",
+
         "mobile",
+
         "website",
+
         "websites",
+
         "database",
+
         "databases",
+
         "responsive websites",
+
         "redesign"
 
     }
@@ -1262,10 +1649,6 @@ def normalize_follow_up(question):
 
     # ========================================================
     # STARTING WITH "AND"
-    #
-    # Example:
-    #
-    # "And iOS?"
     # ========================================================
 
     clean_after = normalize_text(
@@ -1285,10 +1668,6 @@ def normalize_follow_up(question):
 
     # ========================================================
     # STARTING WITH "OR"
-    #
-    # Example:
-    #
-    # "or their responsive websites"
     # ========================================================
 
     clean_after = normalize_text(
@@ -1393,12 +1772,17 @@ Current question:
 {question}
 
 Rules:
-- Answer directly.
+- Answer only the current question.
+- Give the most directly relevant answer.
 - Use simple English.
 - Give one short complete answer.
 - Do not repeat the question.
-- Do not invent information.
+- Do not add unrelated information.
+- Do not assume information that is not in the context.
+- Do not change a positive statement into a negative statement.
+- If the context says DesFlyer provides a service, answer positively.
 - Do not ask a question.
+- Do not add a closing question.
 - Do not output "Answer:".
 - If the information is not available in the context, say:
 "I could not find that information in the DesFlyer documents."
@@ -1670,7 +2054,9 @@ def clean_answer(answer):
     answer = answer.strip()
 
 
+    # --------------------------------------------------------
     # Remove labels
+    # --------------------------------------------------------
 
     answer = re.sub(
 
@@ -1685,7 +2071,9 @@ def clean_answer(answer):
     ).strip()
 
 
+    # --------------------------------------------------------
     # Remove extra whitespace
+    # --------------------------------------------------------
 
     answer = re.sub(
 
@@ -1698,14 +2086,50 @@ def clean_answer(answer):
     ).strip()
 
 
+    # --------------------------------------------------------
+    # Remove generated closing questions
+    # --------------------------------------------------------
+
+    closing_patterns = [
+
+        r"\s*Would you like to know more.*$",
+
+        r"\s*Is there anything else.*$",
+
+        r"\s*Would you like details.*$",
+
+        r"\s*Can I help you.*$"
+
+    ]
+
+
+    for pattern in closing_patterns:
+
+        answer = re.sub(
+
+            pattern,
+
+            "",
+
+            answer,
+
+            flags=re.IGNORECASE
+
+        ).strip()
+
+
+    # --------------------------------------------------------
     # Do not return another question
+    # --------------------------------------------------------
 
     if answer.endswith("?"):
 
         return ""
 
 
+    # --------------------------------------------------------
     # Remove numbered question-like output
+    # --------------------------------------------------------
 
     if re.match(
 
@@ -1718,7 +2142,9 @@ def clean_answer(answer):
         return ""
 
 
+    # --------------------------------------------------------
     # Bad / incomplete answers
+    # --------------------------------------------------------
 
     bad_outputs = {
 
@@ -1814,6 +2240,34 @@ def generate_rag_answer(
 
 
 # ============================================================
+# ADD CONTEXT-AWARE ENDING
+# ============================================================
+
+def finalize_response(
+    answer,
+    closing_type=None
+):
+
+    if not answer:
+
+        return answer
+
+
+    if not ADD_CLOSING_QUESTION:
+
+        return answer
+
+
+    return add_closing_question(
+
+        answer,
+
+        closing_type
+
+    )
+
+
+# ============================================================
 # MAIN CHATBOT FUNCTION
 # ============================================================
 
@@ -1875,19 +2329,29 @@ def ask_chatbot(question):
 
 
     # ========================================================
-    # FAST FAQ
-    #
-    # First check original question.
+    # NORMALIZE STT BEFORE PROCESSING
     # ========================================================
 
-    fast_answer = get_fast_faq_answer(
+    normalized_original = normalize_text(
+        original_question
+    )
+
+
+    # ========================================================
+    # FAST FAQ - ORIGINAL QUESTION
+    # ========================================================
+
+    fast_result = get_fast_faq_answer(
 
         original_question
 
     )
 
 
-    if fast_answer:
+    if fast_result:
+
+        fast_answer, closing_type = fast_result
+
 
         print(
             "\nFAST FAQ PATH"
@@ -1898,11 +2362,20 @@ def ask_chatbot(question):
         )
 
 
+        final_answer = finalize_response(
+
+            fast_answer,
+
+            closing_type
+
+        )
+
+
         add_to_conversation_history(
 
             original_question,
 
-            fast_answer
+            final_answer
 
         )
 
@@ -1920,7 +2393,7 @@ def ask_chatbot(question):
         )
 
 
-        return fast_answer
+        return final_answer
 
 
     # ========================================================
@@ -1965,23 +2438,24 @@ def ask_chatbot(question):
     # ========================================================
     # FAST FAQ AGAIN
     #
-    # Important for:
+    # Examples:
     #
-    # "What about iOS?"
-    #
-    # after normalization:
-    #
-    # "What about DesFlyer iOS?"
+    # What about iOS?
+    # And Android?
+    # Their website?
     # ========================================================
 
-    fast_answer = get_fast_faq_answer(
+    fast_result = get_fast_faq_answer(
 
         search_question
 
     )
 
 
-    if fast_answer:
+    if fast_result:
+
+        fast_answer, closing_type = fast_result
+
 
         print(
             "\nFAST FOLLOW-UP FAQ PATH"
@@ -1992,11 +2466,20 @@ def ask_chatbot(question):
         )
 
 
+        final_answer = finalize_response(
+
+            fast_answer,
+
+            closing_type
+
+        )
+
+
         add_to_conversation_history(
 
             original_question,
 
-            fast_answer
+            final_answer
 
         )
 
@@ -2014,7 +2497,103 @@ def ask_chatbot(question):
         )
 
 
-        return fast_answer
+        return final_answer
+
+
+    # ========================================================
+    # SPECIAL FOLLOW-UP:
+    #
+    # "What about iOS?"
+    #
+    # If FAQ normalization does not catch it,
+    # explicitly understand it as iOS.
+    # ========================================================
+
+    normalized_search = normalize_text(
+        search_question
+    )
+
+
+    if (
+
+        follow_up
+
+        and
+
+        (
+            normalized_search == "desflyer ios"
+            or
+            normalized_search == "desflyer iphone"
+        )
+
+    ):
+
+        final_answer = finalize_response(
+
+            FAST_FAQ["ios"],
+
+            "ios"
+
+        )
+
+
+        add_to_conversation_history(
+
+            original_question,
+
+            final_answer
+
+        )
+
+
+        print(
+            "\nFOLLOW-UP IOS PATH"
+        )
+
+
+        return final_answer
+
+
+    # ========================================================
+    # SPECIAL FOLLOW-UP:
+    #
+    # "What about Android?"
+    # ========================================================
+
+    if (
+
+        follow_up
+
+        and
+
+        normalized_search == "desflyer android"
+
+    ):
+
+        final_answer = finalize_response(
+
+            FAST_FAQ["android"],
+
+            "android"
+
+        )
+
+
+        add_to_conversation_history(
+
+            original_question,
+
+            final_answer
+
+        )
+
+
+        print(
+            "\nFOLLOW-UP ANDROID PATH"
+        )
+
+
+        return final_answer
 
 
     # ========================================================
@@ -2221,6 +2800,163 @@ def ask_chatbot(question):
 
 
     # ========================================================
+    # DETERMINE CLOSING TYPE
+    # ========================================================
+
+    closing_type = None
+
+
+    normalized_question = normalize_text(
+        search_question
+    )
+
+
+    if (
+
+        "ui ux" in normalized_question
+
+        or
+
+        "uiux" in normalized_question
+
+        or
+
+        "user interface" in normalized_question
+
+        or
+
+        "user experience" in normalized_question
+
+    ):
+
+        closing_type = "uiux"
+
+
+    elif (
+
+        "custom software" in normalized_question
+
+        or
+
+        "customized software" in normalized_question
+
+        or
+
+        "customised software" in normalized_question
+
+    ):
+
+        closing_type = "custom_software"
+
+
+    elif (
+
+        "database" in normalized_question
+
+        and
+
+        (
+            "website" in normalized_question
+            or
+            "web" in normalized_question
+        )
+
+    ):
+
+        closing_type = "website_database"
+
+
+    elif "redesign" in normalized_question:
+
+        closing_type = "redesign"
+
+
+    elif (
+
+        "ios" in normalized_question
+        or
+        "iphone" in normalized_question
+
+    ):
+
+        closing_type = "ios"
+
+
+    elif "android" in normalized_question:
+
+        closing_type = "android"
+
+
+    elif (
+
+        "mobile" in normalized_question
+
+        and
+
+        (
+            "application" in normalized_question
+            or
+            "app" in normalized_question
+        )
+
+    ):
+
+        closing_type = "mobile"
+
+
+    elif (
+
+        "website" in normalized_question
+
+        or
+
+        "websites" in normalized_question
+
+    ):
+
+        closing_type = "website"
+
+
+    elif (
+
+        "service" in normalized_question
+
+        or
+
+        "services" in normalized_question
+
+    ):
+
+        closing_type = "services"
+
+
+    elif (
+
+        "software" in normalized_question
+
+        or
+
+        "solution" in normalized_question
+
+    ):
+
+        closing_type = "offer"
+
+
+    # ========================================================
+    # ADD CONTEXT-AWARE CLOSING
+    # ========================================================
+
+    final_answer = finalize_response(
+
+        answer,
+
+        closing_type
+
+    )
+
+
+    # ========================================================
     # SAVE CONVERSATION
     # ========================================================
 
@@ -2228,7 +2964,7 @@ def ask_chatbot(question):
 
         original_question,
 
-        answer
+        final_answer
 
     )
 
@@ -2253,7 +2989,7 @@ def ask_chatbot(question):
     )
 
     print(
-        answer
+        final_answer
     )
 
 
@@ -2280,7 +3016,7 @@ def ask_chatbot(question):
     )
 
 
-    return answer
+    return final_answer
 
 
 # ============================================================
@@ -2289,39 +3025,127 @@ def ask_chatbot(question):
 
 TEST_QUESTIONS = [
 
+    # --------------------------------------------------------
+    # SERVICES
+    # --------------------------------------------------------
+
+    "What service does DesFlyer provide?",
+
+    "What services does DesFlyer provide?",
+
     "What does DesFlyer offer?",
 
-    "Which services does DesFlyer provide?",
-
-    "Does DesFlyer develop websites?",
-
-    "Can they connect websites to databases?",
-
-    "Can they redesign websites?",
+    "What does DesFlyer provide?",
 
     "What kind of software solutions does DesFlyer provide?",
 
+
+    # --------------------------------------------------------
+    # WEBSITE
+    # --------------------------------------------------------
+
+    "Does DesFlyer develop websites?",
+
+    "Can DesFlyer build websites?",
+
+    "Can they build websites?",
+
+    "Does DesFlyer create websites?",
+
+
+    # --------------------------------------------------------
+    # DATABASE
+    # --------------------------------------------------------
+
+    "Can DesFlyer connect websites to databases?",
+
+    "Can they connect websites to databases?",
+
+
+    # --------------------------------------------------------
+    # REDESIGN
+    # --------------------------------------------------------
+
+    "Can DesFlyer redesign websites?",
+
+    "Can DesFlyer redesign existing websites?",
+
+
+    # --------------------------------------------------------
+    # MOBILE
+    # --------------------------------------------------------
+
     "Does DesFlyer develop mobile applications?",
+
+    "Can DesFlyer build mobile applications?",
+
+
+    # --------------------------------------------------------
+    # ANDROID
+    # --------------------------------------------------------
 
     "Can DesFlyer build Android applications?",
 
-    "Does DesFlyer support iOS applications?",
+    "Does DesFlyer support Android?",
 
-    "DesFlyer enna services provide pannanga?",
 
-    "Website develop pannuvangala?",
+    # --------------------------------------------------------
+    # IOS
+    # --------------------------------------------------------
 
-    "Mobile app develop pannuvangala?",
+    "Does DesFlyer develop iOS applications?",
 
-    "Android support irukka?",
+    "Can DesFlyer build iOS applications?",
+
+    "Does DesFlyer support iOS?",
+
+
+    # --------------------------------------------------------
+    # PLATFORMS
+    # --------------------------------------------------------
+
+    "Which platform does DesFlyer support for mobile applications?",
+
+    "Which platforms does DesFlyer support?",
+
+
+    # --------------------------------------------------------
+    # UI / UX
+    # --------------------------------------------------------
+
+    "Does DesFlyer provide UI UX design services?",
+
+    "Does DesFlyer provide UI and UX design?",
+
+    "Does DesFlyer provide user experience design?",
+
+
+    # --------------------------------------------------------
+    # CUSTOM SOFTWARE
+    # --------------------------------------------------------
+
+    "Can DesFlyer develop customized software?",
+
+    "Can DesFlyer develop custom software?",
+
+
+    # --------------------------------------------------------
+    # FOLLOW-UP QUESTIONS
+    # --------------------------------------------------------
 
     "What about iOS?",
 
-    "What about their responsive websites?",
+    "What about Android?",
+
+    "And iOS?",
 
     "And Android?",
 
-    "How about iOS?"
+    "How about iOS?",
+
+    "How about Android?",
+
+    "What about their responsive websites?"
 
 ]
 

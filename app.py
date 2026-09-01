@@ -5,17 +5,8 @@ import time
 
 import uvicorn
 
-from fastapi import (
-    FastAPI,
-    WebSocket,
-    WebSocketDisconnect
-)
-
-from fastapi.responses import (
-    StreamingResponse,
-    HTMLResponse
-)
-
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 
 from rag import ask_chatbot
@@ -29,8 +20,8 @@ from tts import text_to_speech
 
 app = FastAPI(
     title="DesFlyer Voice Assistant API",
-    description="RAG based Voice Assistant using Gemma 2B",
-    version="4.0"
+    description="RAG based Voice Assistant",
+    version="7.0"
 )
 
 
@@ -39,7 +30,6 @@ app = FastAPI(
 # ============================================================
 
 class Question(BaseModel):
-
     question: str
 
 
@@ -51,26 +41,133 @@ class Question(BaseModel):
 def home():
 
     return {
-
-        "message":
-            "DesFlyer Voice Assistant API is running",
-
+        "message": "DesFlyer Voice Assistant API is running",
         "endpoints": {
-
-            "chat":
-                "/chat",
-
-            "chat_stream":
-                "/chat/stream",
-
-            "voice":
-                "/voice",
-
-            "websocket":
-                "/ws/voice"
+            "chat": "/chat",
+            "chat_stream": "/chat/stream",
+            "voice": "/voice",
+            "websocket": "/ws/voice"
         }
     }
+# ============================================================
+# TASK 15 - CLOSING QUESTION
+# ============================================================
 
+def add_closing_question(user_question, answer):
+
+    question = user_question.lower().strip()
+
+    # --------------------------------------------------------
+    # Website related
+    # --------------------------------------------------------
+
+    if any(
+        word in question
+        for word in [
+            "website",
+            "web development",
+            "web application",
+            "web app"
+        ]
+    ):
+
+        closing_question = (
+            "Would you like to know more about "
+            "our website development services?"
+        )
+
+    # --------------------------------------------------------
+    # Mobile application related
+    # --------------------------------------------------------
+
+    elif any(
+        word in question
+        for word in [
+            "mobile",
+            "mobile app",
+            "mobile application",
+            "android",
+            "ios"
+        ]
+    ):
+
+        closing_question = (
+            "Would you like to know more about "
+            "our mobile application development services?"
+        )
+
+    # --------------------------------------------------------
+    # Service related
+    # --------------------------------------------------------
+
+    elif any(
+        word in question
+        for word in [
+            "service",
+            "services",
+            "offer",
+            "provide",
+            "what do you do"
+        ]
+    ):
+
+        closing_question = (
+            "Would you like to know more about "
+            "any of our services?"
+        )
+
+    # --------------------------------------------------------
+    # Company related
+    # --------------------------------------------------------
+
+    elif any(
+        word in question
+        for word in [
+            "desflyer",
+            "company",
+            "about you",
+            "about the company"
+        ]
+    ):
+
+        closing_question = (
+            "Would you like to know more about DesFlyer?"
+        )
+
+    # --------------------------------------------------------
+    # Location related
+    # --------------------------------------------------------
+
+    elif any(
+        word in question
+        for word in [
+            "location",
+            "located",
+            "office",
+            "where"
+        ]
+    ):
+
+        closing_question = (
+            "Would you like to know more about DesFlyer?"
+        )
+
+    # --------------------------------------------------------
+    # General fallback
+    # --------------------------------------------------------
+
+    else:
+
+        closing_question = (
+            "Is there anything else you would like "
+            "to know about DesFlyer?"
+        )
+
+    return (
+        answer.rstrip()
+        + " "
+        + closing_question
+    )
 
 # ============================================================
 # NORMAL CHAT
@@ -87,47 +184,29 @@ def chat(data: Question):
 
         start_time = time.time()
 
-        answer = ask_chatbot(
-            data.question
-        )
+        answer = ask_chatbot(data.question)
 
-        generation_time = (
-            time.time() - start_time
-        )
+        generation_time = time.time() - start_time
 
         print(
             f"⏱️ Generation time: "
             f"{generation_time:.2f} seconds"
         )
 
-        print(
-            "\n🤖 DesFlyer:",
-            answer
-        )
+        print("\n🤖 DesFlyer:", answer)
 
         return {
-
-            "question":
-                data.question,
-
-            "answer":
-                answer
+            "question": data.question,
+            "answer": answer
         }
 
     except Exception as error:
 
-        print(
-            "\n❌ Chat error:",
-            error
-        )
+        print("\n❌ Chat error:", error)
 
         return {
-
-            "question":
-                data.question,
-
-            "answer":
-                "Sorry, an error occurred."
+            "question": data.question,
+            "answer": "Sorry, an error occurred."
         }
 
 
@@ -140,30 +219,19 @@ def chat_stream(data: Question):
 
     try:
 
-        answer = ask_chatbot(
-            data.question
-        )
+        answer = ask_chatbot(data.question)
 
         return StreamingResponse(
-
             iter([answer]),
-
             media_type="text/plain"
         )
 
     except Exception as error:
 
-        print(
-            "❌ Streaming error:",
-            error
-        )
+        print("❌ Streaming error:", error)
 
         return StreamingResponse(
-
-            iter([
-                "Sorry, an error occurred."
-            ]),
-
+            iter(["Sorry, an error occurred."]),
             media_type="text/plain"
         )
 
@@ -173,9 +241,7 @@ def chat_stream(data: Question):
 # ============================================================
 
 @app.websocket("/ws/voice")
-async def websocket_voice(
-    websocket: WebSocket
-):
+async def websocket_voice(websocket: WebSocket):
 
     await websocket.accept()
 
@@ -191,48 +257,102 @@ async def websocket_voice(
 
     assistant_speaking = False
 
+    waiting_for_barge_audio = False
+
+    stopped = False
+
     try:
 
-        # ====================================================
-        # INITIAL CONNECTION
-        # ====================================================
+        await websocket.send_text("CONNECTED")
+        await websocket.send_text("READY")
 
-        await websocket.send_text(
-            "CONNECTED"
+        # ========================================================
+        # WELCOME MESSAGE
+        # ========================================================
+
+        welcome_message = (
+            "Welcome to DesFlyer. "
+            "How can I help you today?"
         )
 
-        await websocket.send_text(
-            "READY"
+        print(
+            "\n👋 Welcome message:",
+            welcome_message
         )
 
-        # ====================================================
-        # MAIN LOOP
-        # ====================================================
+        try:
+
+            welcome_audio = await asyncio.to_thread(
+                text_to_speech,
+                welcome_message
+            )
+
+            if (
+                welcome_audio
+                and
+                os.path.exists(welcome_audio)
+            ):
+
+                with open(
+                    welcome_audio,
+                    "rb"
+                ) as audio_file:
+
+                    welcome_wav_data = audio_file.read()
+
+                print(
+                    f"🔊 Sending welcome audio: "
+                    f"{len(welcome_wav_data)} bytes"
+                )
+
+                await websocket.send_bytes(
+                    welcome_wav_data
+                )
+
+                print(
+                    "✅ Welcome message sent."
+                )
+
+                try:
+
+                    os.remove(
+                        welcome_audio
+                    )
+
+                except Exception:
+
+                    pass
+
+            else:
+
+                print(
+                    "⚠️ Welcome TTS audio was not created."
+                )
+
+        except Exception as error:
+
+            print(
+                "❌ Welcome TTS error:",
+                error
+            )
 
         while True:
 
             message = await websocket.receive()
 
-            # =================================================
+            # ====================================================
             # TEXT MESSAGE
-            # =================================================
+            # ====================================================
 
             if "text" in message:
 
-                command = (
-                    message["text"]
-                    .strip()
-                    .lower()
-                )
+                command = message["text"].strip().lower()
 
-                print(
-                    "\n📨 Command:",
-                    command
-                )
+                print("\n📨 Command:", command)
 
-                # =============================================
+                # =================================================
                 # START
-                # =============================================
+                # =================================================
 
                 if command in {
                     "start",
@@ -240,10 +360,18 @@ async def websocket_voice(
                     "listen"
                 }:
 
+                    if stopped:
+
+                        print(
+                            "⚠️ Session already stopped."
+                        )
+
+                        continue
+
                     if processing:
 
                         print(
-                            "⚠️ Server is currently processing."
+                            "⚠️ Server is busy."
                         )
 
                         await websocket.send_text(
@@ -262,39 +390,57 @@ async def websocket_voice(
                         "LISTENING"
                     )
 
-                # =============================================
+                # =================================================
                 # BARGE-IN
-                # =============================================
+                # =================================================
 
                 elif command == "barge_in":
 
                     print(
-                        "\n🛑 BARGE-IN REQUEST RECEIVED"
+                        "\n===================================="
                     )
 
-                    # The browser has already stopped
-                    # assistant audio.
+                    print(
+                        "🛑 BARGE-IN REQUEST RECEIVED"
+                    )
+
+                    print(
+                        "===================================="
+                    )
+
+                    # -------------------------------------------------
+                    # IMPORTANT:
+                    #
+                    # Browser already stopped the TTS.
+                    #
+                    # Backend must NOT close websocket.
+                    # Backend must NOT end conversation.
+                    #
+                    # Backend only prepares to receive the new
+                    # interrupted speech audio.
+                    # -------------------------------------------------
 
                     assistant_speaking = False
 
-                    # Important:
-                    # processing remains True because the
-                    # next binary message is the user's
-                    # interrupted speech.
-
                     processing = True
+
+                    waiting_for_barge_audio = True
 
                     await websocket.send_text(
                         "BARGE_IN_ACK"
+                    )
+
+                    await websocket.send_text(
+                        "LISTENING"
                     )
 
                     print(
                         "🎤 Server ready for interrupted speech."
                     )
 
-                # =============================================
+                # =================================================
                 # STOP
-                # =============================================
+                # =================================================
 
                 elif command in {
                     "stop",
@@ -307,9 +453,13 @@ async def websocket_voice(
                         "\n🛑 Stop requested."
                     )
 
+                    stopped = True
+
                     processing = False
 
                     assistant_speaking = False
+
+                    waiting_for_barge_audio = False
 
                     await websocket.send_text(
                         "EXIT"
@@ -317,9 +467,9 @@ async def websocket_voice(
 
                     break
 
-                # =============================================
+                # =================================================
                 # PING
-                # =============================================
+                # =================================================
 
                 elif command == "ping":
 
@@ -327,9 +477,9 @@ async def websocket_voice(
                         "pong"
                     )
 
-                # =============================================
+                # =================================================
                 # EMPTY
-                # =============================================
+                # =================================================
 
                 elif command == "empty":
 
@@ -339,6 +489,8 @@ async def websocket_voice(
 
                     processing = False
 
+                    waiting_for_barge_audio = False
+
                     await websocket.send_text(
                         "NO_SPEECH"
                     )
@@ -347,9 +499,9 @@ async def websocket_voice(
                         "READY"
                     )
 
-                # =============================================
-                # UNKNOWN COMMAND
-                # =============================================
+                # =================================================
+                # UNKNOWN
+                # =================================================
 
                 else:
 
@@ -362,9 +514,9 @@ async def websocket_voice(
                         "UNKNOWN_COMMAND"
                     )
 
-            # =================================================
+            # ====================================================
             # BINARY AUDIO
-            # =================================================
+            # ====================================================
 
             elif "bytes" in message:
 
@@ -377,6 +529,8 @@ async def websocket_voice(
                     )
 
                     processing = False
+
+                    waiting_for_barge_audio = False
 
                     await websocket.send_text(
                         "NO_SPEECH"
@@ -394,10 +548,35 @@ async def websocket_voice(
                 )
 
                 # =================================================
-                # PROCESSING
+                # CHECK CURRENT STATE
                 # =================================================
 
+                if stopped:
+
+                    print(
+                        "⚠️ Ignoring audio because session stopped."
+                    )
+
+                    continue
+
                 processing = True
+
+                # If this audio came after a barge-in command,
+                # consume the barge-in state.
+
+                if waiting_for_barge_audio:
+
+                    print(
+                        "🛑 Processing interrupted speech."
+                    )
+
+                    waiting_for_barge_audio = False
+
+                else:
+
+                    print(
+                        "🎤 Processing normal speech."
+                    )
 
                 await websocket.send_text(
                     "PROCESSING"
@@ -416,20 +595,15 @@ async def websocket_voice(
                 try:
 
                     with tempfile.NamedTemporaryFile(
-
                         delete=False,
-
                         suffix=".webm"
-
                     ) as temp_audio:
 
                         temp_audio.write(
                             audio_data
                         )
 
-                        audio_file = (
-                            temp_audio.name
-                        )
+                        audio_file = temp_audio.name
 
                     print(
                         "💾 Browser audio saved:",
@@ -467,16 +641,9 @@ async def websocket_voice(
 
                 try:
 
-                    user_text = (
-
-                        await asyncio.to_thread(
-
-                            transcribe_audio_file,
-
-                            audio_file
-
-                        )
-
+                    user_text = await asyncio.to_thread(
+                        transcribe_audio_file,
+                        audio_file
                     )
 
                 except Exception as error:
@@ -489,7 +656,8 @@ async def websocket_voice(
                     user_text = ""
 
                 stt_time = (
-                    time.time() - stt_start
+                    time.time()
+                    - stt_start
                 )
 
                 print(
@@ -504,15 +672,9 @@ async def websocket_voice(
                 try:
 
                     if (
-
                         audio_file
-
                         and
-
-                        os.path.exists(
-                            audio_file
-                        )
-
+                        os.path.exists(audio_file)
                     ):
 
                         os.remove(
@@ -535,6 +697,8 @@ async def websocket_voice(
 
                     processing = False
 
+                    waiting_for_barge_audio = False
+
                     await websocket.send_text(
                         "NO_SPEECH"
                     )
@@ -546,7 +710,7 @@ async def websocket_voice(
                     continue
 
                 # =================================================
-                # EXIT VOICE COMMAND
+                # EXIT
                 # =================================================
 
                 if user_text == "__EXIT__":
@@ -584,16 +748,9 @@ async def websocket_voice(
 
                 try:
 
-                    answer = (
-
-                        await asyncio.to_thread(
-
-                            ask_chatbot,
-
-                            user_text
-
-                        )
-
+                    answer = await asyncio.to_thread(
+                        ask_chatbot,
+                        user_text
                     )
 
                 except Exception as error:
@@ -616,13 +773,32 @@ async def websocket_voice(
                     continue
 
                 rag_time = (
-                    time.time() - rag_start
+                    time.time()
+                    - rag_start
                 )
 
                 print(
                     f"⏱️ RAG time: "
                     f"{rag_time:.2f} seconds"
                 )
+                # =================================================
+                #  ADD CLOSING QUESTION
+                # =================================================
+
+                answer = add_closing_question(
+                    user_text,
+                    answer
+                )
+
+                print(
+                    "\n💬 Closing question added."
+                )
+
+                print(
+                    "🤖 Final DesFlyer response:",
+                    answer
+                )
+                
 
                 # =================================================
                 # EMPTY ANSWER
@@ -643,7 +819,7 @@ async def websocket_voice(
                     continue
 
                 # =================================================
-                # SEND ANSWER TEXT
+                # SEND ANSWER
                 # =================================================
 
                 await websocket.send_text(
@@ -665,6 +841,8 @@ async def websocket_voice(
 
                 assistant_speaking = True
 
+                processing = False
+
                 print(
                     "\n🔊 STATE: SPEAKING"
                 )
@@ -675,16 +853,9 @@ async def websocket_voice(
 
                 try:
 
-                    audio_output = (
-
-                        await asyncio.to_thread(
-
-                            text_to_speech,
-
-                            answer
-
-                        )
-
+                    audio_output = await asyncio.to_thread(
+                        text_to_speech,
+                        answer
                     )
 
                 except Exception as error:
@@ -695,7 +866,8 @@ async def websocket_voice(
                     )
 
                 tts_time = (
-                    time.time() - tts_start
+                    time.time()
+                    - tts_start
                 )
 
                 print(
@@ -708,30 +880,19 @@ async def websocket_voice(
                 # =================================================
 
                 if (
-
                     audio_output
-
                     and
-
-                    os.path.exists(
-                        audio_output
-                    )
-
+                    os.path.exists(audio_output)
                 ):
 
                     try:
 
                         with open(
-
                             audio_output,
-
                             "rb"
-
                         ) as audio_file:
 
-                            wav_data = (
-                                audio_file.read()
-                            )
+                            wav_data = audio_file.read()
 
                         print(
                             f"🔊 Sending WAV: "
@@ -787,26 +948,21 @@ async def websocket_voice(
                         "TTS_ERROR"
                     )
 
-                # =================================================
-                # IMPORTANT
-                # =================================================
-
-                # Browser controls the actual playback.
-                #
-                # Browser sends the next command/audio when:
-                #
-                # 1. TTS finishes
-                # 2. User interrupts TTS
-                #
-                processing = False
-
                 print(
-                    "\n⏳ Waiting for browser playback event..."
+                    "\n⏳ Waiting for browser:"
                 )
 
-            # =================================================
-            # UNKNOWN WEBSOCKET MESSAGE
-            # =================================================
+                print(
+                    "   • TTS completion"
+                )
+
+                print(
+                    "   • barge-in"
+                )
+
+            # ====================================================
+            # UNKNOWN MESSAGE
+            # ====================================================
 
             else:
 
@@ -833,6 +989,8 @@ async def websocket_voice(
 
         assistant_speaking = False
 
+        waiting_for_barge_audio = False
+
         print(
             "🔌 WebSocket connection closed."
         )
@@ -849,7 +1007,6 @@ async def websocket_voice(
 def voice_page():
 
     return HTMLResponse(
-
         content=r"""
 <!DOCTYPE html>
 
@@ -1219,9 +1376,7 @@ button:disabled {
         </div>
 
         <div id="description">
-
             Click Connect to start.
-
         </div>
 
     </div>
@@ -1280,7 +1435,7 @@ button:disabled {
         <div>→</div>
 
         <div class="step">
-            🤖 Gemma 2B
+            🤖 LLM
         </div>
 
         <div>→</div>
@@ -1292,22 +1447,19 @@ button:disabled {
     </div>
 
     <div class="conversation-title">
-
         Conversation
-
     </div>
 
     <div id="output">
 
         <div class="system">
-
             Connect to start.
-
         </div>
 
     </div>
 
 </div>
+
 
 <script>
 
@@ -1334,22 +1486,22 @@ let mediaRecorder = null;
 
 let audioChunks = [];
 
+let isRecording = false;
+
 
 // ============================================================
-// STATE
+// GENERAL STATE
 // ============================================================
 
 let isProcessing = false;
 
 let isSpeaking = false;
 
-let isRecording = false;
-
 let stoppedByUser = false;
 
 
 // ============================================================
-// CURRENT AUDIO
+// AUDIO
 // ============================================================
 
 let currentAudio = null;
@@ -1358,7 +1510,7 @@ let currentAudioUrl = null;
 
 
 // ============================================================
-// NORMAL AUDIO ANALYSIS
+// NORMAL SILENCE DETECTION
 // ============================================================
 
 let audioContext = null;
@@ -1377,7 +1529,7 @@ let recordingStartTime = null;
 
 
 // ============================================================
-// BARGE-IN ANALYSIS
+// BARGE-IN DETECTOR
 // ============================================================
 
 let bargeInAudioContext = null;
@@ -1392,12 +1544,22 @@ let bargeInTriggered = false;
 
 let bargeInSpeechStart = null;
 
+let bargeInLastSpeechTime = 0;
+
 let bargeInNoiseFloor = 0;
 
+let bargeInNoiseSamples = [];
+
+let bargeInCalibrationComplete = false;
+
+let bargeInCalibrationStart = 0;
+
 
 // ============================================================
-// NORMAL RECORDING SETTINGS
+// SETTINGS
 // ============================================================
+
+// Normal recording
 
 const SILENCE_THRESHOLD = 0.015;
 
@@ -1409,24 +1571,40 @@ const MAX_RECORDING_TIME = 30000;
 // ============================================================
 // BARGE-IN SETTINGS
 // ============================================================
-//
-// The old code used:
-//
-// BARGE_IN_THRESHOLD = 0.025
-//
-// This is too sensitive on some microphones.
-//
-// We now use an adaptive threshold.
-//
-// ============================================================
 
-const BARGE_IN_MIN_THRESHOLD = 0.035;
+// Minimum speech level
 
-const BARGE_IN_CONFIRMATION_TIME = 600;
+const BARGE_IN_MIN_THRESHOLD = 0.020;
 
-const BARGE_IN_COOLDOWN = 350;
 
-const BARGE_IN_SAMPLE_TIME = 500;
+// Maximum threshold
+
+const BARGE_IN_MAX_THRESHOLD = 0.080;
+
+
+// Noise multiplier
+
+const BARGE_IN_NOISE_MULTIPLIER = 2.5;
+
+
+// User must speak continuously for this time
+
+const BARGE_IN_CONFIRMATION_TIME = 300;
+
+
+// Detection interval
+
+const BARGE_IN_CHECK_INTERVAL = 30;
+
+
+// Calibration
+
+const BARGE_IN_CALIBRATION_TIME = 500;
+
+
+// Natural speech pause
+
+const BARGE_IN_SPEECH_HOLD = 180;
 
 
 // ============================================================
@@ -1490,6 +1668,7 @@ function setStatus(
         "status-" +
         state.toLowerCase()
     );
+
 
     if (
         state === "Disconnected"
@@ -1591,7 +1770,10 @@ function stopAssistantAudio() {
         "🛑 Stopping assistant audio."
     );
 
-    if (currentAudio) {
+
+    if (
+        currentAudio
+    ) {
 
         try {
 
@@ -1612,7 +1794,10 @@ function stopAssistantAudio() {
 
     }
 
-    if (currentAudioUrl) {
+
+    if (
+        currentAudioUrl
+    ) {
 
         try {
 
@@ -1624,13 +1809,12 @@ function stopAssistantAudio() {
 
         catch (error) {
 
-            console.warn(
-                error
-            );
+            console.warn(error);
 
         }
 
     }
+
 
     currentAudio = null;
 
@@ -1638,51 +1822,117 @@ function stopAssistantAudio() {
 
     isSpeaking = false;
 
-    stopBargeInDetection();
+}
+
+
+// ============================================================
+// CALCULATE RMS
+// ============================================================
+
+function calculateRMS(
+    analyser,
+    dataArray
+) {
+
+    analyser.getByteTimeDomainData(
+        dataArray
+    );
+
+    let sum = 0;
+
+    for (
+        let i = 0;
+        i < dataArray.length;
+        i++
+    ) {
+
+        const value =
+            (
+                dataArray[i] - 128
+            ) / 128;
+
+        sum +=
+            value * value;
+
+    }
+
+    return Math.sqrt(
+        sum / dataArray.length
+    );
 
 }
 
 
 // ============================================================
-// START BARGE-IN DETECTION
+// START BARGE-IN DETECTOR
 // ============================================================
 
 async function startBargeInDetection() {
 
-    if (!audioStream) {
-
-        console.warn(
-            "⚠️ No microphone stream."
-        );
+    if (
+        !isSpeaking
+    ) {
 
         return;
 
     }
 
-    if (!isSpeaking) {
 
-        return;
+    console.log(
+        "\n===================================="
+    );
+
+    console.log(
+        "🎤 STARTING BARGE-IN DETECTOR"
+    );
+
+    console.log(
+        "===================================="
+    );
+
+
+    stopBargeInDetection();
+
+
+    if (
+        !audioStream ||
+        !audioStream.active
+    ) {
+
+        try {
+
+            await ensureMicrophone();
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "❌ Microphone unavailable:",
+                error
+            );
+
+            return;
+
+        }
 
     }
+
+
+    bargeInTriggered = false;
+
+    bargeInSpeechStart = null;
+
+    bargeInLastSpeechTime = 0;
+
+    bargeInNoiseFloor = 0;
+
+    bargeInNoiseSamples = [];
+
+    bargeInCalibrationComplete = false;
+
 
     try {
-
-        stopBargeInDetection();
-
-        bargeInTriggered =
-            false;
-
-        bargeInSpeechStart =
-            null;
-
-        bargeInNoiseFloor =
-            0;
-
-
-        console.log(
-            "🎤 Starting improved barge-in detection..."
-        );
-
 
         bargeInAudioContext =
             new (
@@ -1705,12 +1955,9 @@ async function startBargeInDetection() {
             bargeInAudioContext.createAnalyser();
 
 
-        bargeInAnalyser.fftSize =
-            2048;
+        bargeInAnalyser.fftSize = 1024;
 
-
-        bargeInAnalyser.smoothingTimeConstant =
-            0.75;
+        bargeInAnalyser.smoothingTimeConstant = 0.1;
 
 
         bargeInMicrophoneSource =
@@ -1730,61 +1977,20 @@ async function startBargeInDetection() {
             );
 
 
-        // ====================================================
-        // MEASURE BACKGROUND NOISE
-        // ====================================================
-
-        let noiseSamples = [];
-
-        let noiseStart =
+        bargeInCalibrationStart =
             Date.now();
 
 
-        function calculateRMS() {
-
-            bargeInAnalyser.getByteTimeDomainData(
-                dataArray
-            );
-
-            let sum = 0;
-
-            for (
-                let i = 0;
-                i < dataArray.length;
-                i++
-            ) {
-
-                const normalized =
-                    (
-                        dataArray[i] -
-                        128
-                    ) / 128;
-
-                sum +=
-                    normalized *
-                    normalized;
-
-            }
-
-            return Math.sqrt(
-                sum /
-                dataArray.length
-            );
-
-        }
+        console.log(
+            "🎚️ Calibrating microphone..."
+        );
 
 
-        function checkVolume() {
+        function checkBargeIn() {
 
             if (
-                !isSpeaking
-            ) {
-
-                return;
-
-            }
-
-            if (
+                !isSpeaking ||
+                bargeInTriggered ||
                 !bargeInAnalyser
             ) {
 
@@ -1794,26 +2000,34 @@ async function startBargeInDetection() {
 
 
             const rms =
-                calculateRMS();
+                calculateRMS(
+                    bargeInAnalyser,
+                    dataArray
+                );
+
+
+            const now =
+                Date.now();
 
 
             // =================================================
-            // FIRST 500ms = NOISE CALIBRATION
+            // CALIBRATION
             // =================================================
 
             if (
-                Date.now() -
-                noiseStart <
-                BARGE_IN_SAMPLE_TIME
+                now -
+                bargeInCalibrationStart <
+                BARGE_IN_CALIBRATION_TIME
             ) {
 
-                noiseSamples.push(
+                bargeInNoiseSamples.push(
                     rms
                 );
 
                 bargeInCheckTimer =
-                    requestAnimationFrame(
-                        checkVolume
+                    setTimeout(
+                        checkBargeIn,
+                        BARGE_IN_CHECK_INTERVAL
                     );
 
                 return;
@@ -1822,43 +2036,47 @@ async function startBargeInDetection() {
 
 
             // =================================================
-            // CALCULATE NOISE FLOOR
+            // NOISE FLOOR
             // =================================================
 
             if (
-                bargeInNoiseFloor === 0
+                !bargeInCalibrationComplete
             ) {
 
                 if (
-                    noiseSamples.length > 0
+                    bargeInNoiseSamples.length
                 ) {
 
-                    const total =
-                        noiseSamples.reduce(
-                            (
-                                a,
-                                b
-                            ) =>
-                                a + b,
-                            0
+                    const sorted =
+                        [
+                            ...bargeInNoiseSamples
+                        ].sort(
+                            (a, b) => a - b
+                        );
+
+                    const middle =
+                        Math.floor(
+                            sorted.length / 2
                         );
 
                     bargeInNoiseFloor =
-                        total /
-                        noiseSamples.length;
+                        sorted[middle];
 
                 }
-
                 else {
 
                     bargeInNoiseFloor =
-                        0.01;
+                        0.005;
 
                 }
 
 
+                bargeInCalibrationComplete =
+                    true;
+
+
                 console.log(
-                    "🎚️ Barge-in noise floor:",
+                    "🎚️ Noise floor:",
                     bargeInNoiseFloor.toFixed(4)
                 );
 
@@ -1869,62 +2087,62 @@ async function startBargeInDetection() {
             // ADAPTIVE THRESHOLD
             // =================================================
 
-            const adaptiveThreshold =
+            let threshold =
                 Math.max(
-
                     BARGE_IN_MIN_THRESHOLD,
+                    bargeInNoiseFloor *
+                    BARGE_IN_NOISE_MULTIPLIER
+                );
 
-                    bargeInNoiseFloor * 3
 
+            threshold =
+                Math.min(
+                    threshold,
+                    BARGE_IN_MAX_THRESHOLD
                 );
 
 
             // =================================================
-            // USER SPEECH
+            // SPEECH DETECTED
             // =================================================
 
             if (
-                rms >
-                adaptiveThreshold
+                rms > threshold
             ) {
 
                 if (
-                    bargeInSpeechStart ===
-                    null
+                    bargeInSpeechStart === null
                 ) {
 
                     bargeInSpeechStart =
-                        Date.now();
+                        now;
 
                     console.log(
-                        "🎤 Possible user speech detected..."
+                        "🎤 Possible speech:",
+                        rms.toFixed(4),
+                        "threshold:",
+                        threshold.toFixed(4)
                     );
 
                 }
 
 
-                const speechDuration =
-                    Date.now() -
-                    bargeInSpeechStart;
+                bargeInLastSpeechTime =
+                    now;
 
 
                 // =================================================
-                // REQUIRE CONTINUOUS SPEECH
+                // CONFIRM
                 // =================================================
 
                 if (
-
-                    speechDuration >=
+                    now -
+                    bargeInSpeechStart >=
                     BARGE_IN_CONFIRMATION_TIME
-
-                    &&
-
-                    !bargeInTriggered
-
                 ) {
 
                     console.log(
-                        "🛑 Confirmed user speech."
+                        "\n🛑 USER SPEECH CONFIRMED"
                     );
 
                     triggerBargeIn();
@@ -1937,30 +2155,54 @@ async function startBargeInDetection() {
 
             else {
 
-                // Noise / short sound.
+                if (
+                    bargeInSpeechStart !== null &&
+                    now -
+                    bargeInLastSpeechTime >
+                    BARGE_IN_SPEECH_HOLD
+                ) {
 
-                bargeInSpeechStart =
-                    null;
+                    bargeInSpeechStart =
+                        null;
+
+                }
 
             }
 
 
-            bargeInCheckTimer =
-                requestAnimationFrame(
-                    checkVolume
-                );
+            // =================================================
+            // CONTINUE
+            // =================================================
+
+            if (
+                isSpeaking &&
+                !bargeInTriggered
+            ) {
+
+                bargeInCheckTimer =
+                    setTimeout(
+                        checkBargeIn,
+                        BARGE_IN_CHECK_INTERVAL
+                    );
+
+            }
 
         }
 
 
-        checkVolume();
+        checkBargeIn();
+
+
+        console.log(
+            "✅ Barge-in detector ACTIVE."
+        );
 
     }
 
     catch (error) {
 
         console.error(
-            "❌ Barge-in detection error:",
+            "❌ Barge-in detector error:",
             error
         );
 
@@ -1983,6 +2225,7 @@ async function triggerBargeIn() {
 
     }
 
+
     if (
         !isSpeaking
     ) {
@@ -1992,48 +2235,76 @@ async function triggerBargeIn() {
     }
 
 
-    bargeInTriggered =
-        true;
+    bargeInTriggered = true;
 
 
     console.log(
-        "\n🛑 USER BARGE-IN DETECTED"
+        "\n===================================="
+    );
+
+    console.log(
+        "🛑 BARGE-IN TRIGGERED"
+    );
+
+    console.log(
+        "===================================="
     );
 
 
     // ========================================================
-    // STOP BARGE-IN ANALYSIS FIRST
+    // 1. STOP DETECTOR
     // ========================================================
 
     stopBargeInDetection();
 
 
     // ========================================================
-    // STOP TTS IMMEDIATELY
+    // 2. STOP EXISTING RECORDER
+    // ========================================================
+
+    stopRecordingWithoutSending();
+
+
+    // ========================================================
+    // 3. STOP TTS
     // ========================================================
 
     stopAssistantAudio();
 
 
     // ========================================================
-    // INFORM BACKEND
+    // 4. SEND BARGE-IN COMMAND
     // ========================================================
 
     if (
-
         socket &&
-
         socket.readyState ===
         WebSocket.OPEN
-
     ) {
 
         socket.send(
             "barge_in"
         );
 
+        console.log(
+            "📡 barge_in command sent."
+        );
+
+    }
+    else {
+
+        console.error(
+            "❌ WebSocket unavailable."
+        );
+
+        return;
+
     }
 
+
+    // ========================================================
+    // 5. UI
+    // ========================================================
 
     addMessage(
         "🛑 Assistant interrupted.",
@@ -2047,34 +2318,22 @@ async function triggerBargeIn() {
     );
 
 
-    startButton.disabled =
-        true;
+    startButton.disabled = true;
 
-    stopButton.disabled =
-        false;
+    stopButton.disabled = false;
 
-
-    isProcessing =
-        true;
+    isProcessing = true;
 
 
     // ========================================================
-    // IMPORTANT DELAY
-    // ========================================================
-    //
-    // Give the browser time to completely stop the TTS
-    // playback before MediaRecorder starts.
-    //
-    // This prevents the first part of the recording from
-    // containing audio playback noise.
-    //
+    // 6. WAIT FOR BACKEND ACK
     // ========================================================
 
     await new Promise(
         resolve =>
             setTimeout(
                 resolve,
-                BARGE_IN_COOLDOWN
+                100
             )
     );
 
@@ -2089,8 +2348,13 @@ async function triggerBargeIn() {
 
 
     // ========================================================
-    // START NEW RECORDING
+    // 7. START COMPLETELY NEW RECORDING
     // ========================================================
+
+    console.log(
+        "🎤 Starting NEW interrupted recording..."
+    );
+
 
     await startRecording();
 
@@ -2098,7 +2362,7 @@ async function triggerBargeIn() {
 
 
 // ============================================================
-// STOP BARGE-IN DETECTION
+// STOP BARGE-IN DETECTOR
 // ============================================================
 
 function stopBargeInDetection() {
@@ -2107,12 +2371,11 @@ function stopBargeInDetection() {
         bargeInCheckTimer
     ) {
 
-        cancelAnimationFrame(
+        clearTimeout(
             bargeInCheckTimer
         );
 
-        bargeInCheckTimer =
-            null;
+        bargeInCheckTimer = null;
 
     }
 
@@ -2129,14 +2392,11 @@ function stopBargeInDetection() {
 
         catch (error) {
 
-            console.warn(
-                error
-            );
+            console.warn(error);
 
         }
 
-        bargeInMicrophoneSource =
-            null;
+        bargeInMicrophoneSource = null;
 
     }
 
@@ -2147,32 +2407,33 @@ function stopBargeInDetection() {
 
         try {
 
-            bargeInAudioContext.close();
+            if (
+                bargeInAudioContext.state !==
+                "closed"
+            ) {
+
+                bargeInAudioContext.close();
+
+            }
 
         }
 
         catch (error) {
 
-            console.warn(
-                error
-            );
+            console.warn(error);
 
         }
 
-        bargeInAudioContext =
-            null;
+        bargeInAudioContext = null;
 
     }
 
 
-    bargeInAnalyser =
-        null;
+    bargeInAnalyser = null;
 
-    bargeInSpeechStart =
-        null;
+    bargeInSpeechStart = null;
 
-    bargeInNoiseFloor =
-        0;
+    bargeInLastSpeechTime = 0;
 
 }
 
@@ -2184,26 +2445,17 @@ function stopBargeInDetection() {
 function connectWebSocket() {
 
     if (
-
         socket &&
-
         socket.readyState ===
         WebSocket.OPEN
-
     ) {
-
-        setStatus(
-            "Ready",
-            "WebSocket is already connected."
-        );
 
         return;
 
     }
 
 
-    stoppedByUser =
-        false;
+    stoppedByUser = false;
 
 
     const protocol =
@@ -2236,10 +2488,6 @@ function connectWebSocket() {
         "arraybuffer";
 
 
-    // ========================================================
-    // OPEN
-    // ========================================================
-
     socket.onopen =
         function() {
 
@@ -2248,20 +2496,11 @@ function connectWebSocket() {
         );
 
 
-        connectButton.disabled =
-            true;
+        connectButton.disabled = true;
 
-        startButton.disabled =
-            false;
+        startButton.disabled = false;
 
-        stopButton.disabled =
-            true;
-
-
-        addMessage(
-            "🔌 WebSocket connected",
-            "system"
-        );
+        stopButton.disabled = true;
 
 
         setStatus(
@@ -2269,24 +2508,28 @@ function connectWebSocket() {
             "Connection established."
         );
 
+
+        addMessage(
+            "🔌 WebSocket connected",
+            "system"
+        );
+
     };
 
 
     // ========================================================
-    // MESSAGE
+    // SERVER MESSAGE
     // ========================================================
 
     socket.onmessage =
         async function(event) {
 
-
         // ====================================================
-        // BINARY AUDIO
+        // AUDIO
         // ====================================================
 
         if (
-            event.data instanceof
-            ArrayBuffer
+            event.data instanceof ArrayBuffer
         ) {
 
             console.log(
@@ -2294,63 +2537,113 @@ function connectWebSocket() {
             );
 
 
-            try {
+            // ------------------------------------------------
+            // ALWAYS stop previous detector
+            // ------------------------------------------------
 
-                const audioBlob =
-                    new Blob(
-                        [
-                            event.data
-                        ],
-                        {
-                            type:
-                                "audio/wav"
-                        }
-                    );
+            stopBargeInDetection();
 
 
-                currentAudioUrl =
-                    URL.createObjectURL(
-                        audioBlob
-                    );
+            // ------------------------------------------------
+            // Stop old audio
+            // ------------------------------------------------
+
+            if (
+                currentAudio
+            ) {
+
+                try {
+
+                    currentAudio.pause();
+
+                }
+
+                catch (error) {
+
+                    console.warn(error);
+
+                }
+
+            }
 
 
-                const audio =
-                    new Audio(
-                        currentAudioUrl
-                    );
+            // ------------------------------------------------
+            // Create audio
+            // ------------------------------------------------
+
+            const audioBlob =
+                new Blob(
+                    [
+                        event.data
+                    ],
+                    {
+                        type:
+                            "audio/wav"
+                    }
+                );
 
 
-                currentAudio =
-                    audio;
+            currentAudioUrl =
+                URL.createObjectURL(
+                    audioBlob
+                );
 
 
-                isSpeaking =
-                    true;
+            const audio =
+                new Audio(
+                    currentAudioUrl
+                );
 
 
-                // =================================================
-                // AUDIO ENDED
-                // =================================================
-
-                audio.onended =
-                    async function() {
-
-                    console.log(
-                        "✅ TTS playback completed."
-                    );
+            currentAudio =
+                audio;
 
 
-                    isSpeaking =
-                        false;
+            // =================================================
+            // SPEAKING STATE
+            // =================================================
+
+            isSpeaking = true;
+
+            isProcessing = false;
 
 
-                    currentAudio =
-                        null;
+            setStatus(
+                "Speaking",
+                "🔊 Speaking... You can interrupt me."
+            );
 
 
-                    if (
-                        currentAudioUrl
-                    ) {
+            startButton.disabled = true;
+
+            stopButton.disabled = false;
+
+
+            // =================================================
+            // AUDIO ENDED
+            // =================================================
+
+            audio.onended =
+                async function() {
+
+                console.log(
+                    "✅ TTS playback completed."
+                );
+
+
+                isSpeaking = false;
+
+                stopBargeInDetection();
+
+
+                currentAudio = null;
+
+
+                if (
+                    currentAudioUrl
+                ) {
+
+                    try {
 
                         URL.revokeObjectURL(
                             currentAudioUrl
@@ -2358,136 +2651,82 @@ function connectWebSocket() {
 
                     }
 
+                    catch (error) {
 
-                    currentAudioUrl =
-                        null;
-
-
-                    stopBargeInDetection();
-
-
-                    if (
-                        stoppedByUser
-                    ) {
-
-                        return;
+                        console.warn(error);
 
                     }
 
-
-                    // =============================================
-                    // CONTINUOUS CONVERSATION
-                    // =============================================
-
-                    addMessage(
-                        "🎤 Listening for your next question...",
-                        "system"
-                    );
+                }
 
 
-                    setStatus(
-                        "Listening",
-                        "🎤 Speak naturally..."
-                    );
+                currentAudioUrl = null;
 
 
-                    startButton.disabled =
-                        true;
+                if (
+                    stoppedByUser
+                ) {
 
-                    stopButton.disabled =
-                        false;
+                    return;
 
-
-                    isProcessing =
-                        true;
-
-
-                    // =============================================
-                    // SMALL TTS TAIL DELAY
-                    // =============================================
-
-                    await new Promise(
-                        resolve =>
-                            setTimeout(
-                                resolve,
-                                400
-                            )
-                    );
-
-
-                    if (
-                        stoppedByUser
-                    ) {
-
-                        return;
-
-                    }
-
-
-                    await startRecording();
-
-                };
+                }
 
 
                 // =================================================
-                // AUDIO ERROR
+                // CONTINUE CONVERSATION
                 // =================================================
 
-                audio.onerror =
-                    function(error) {
-
-                    console.error(
-                        "❌ Audio playback error:",
-                        error
-                    );
-
-
-                    isSpeaking =
-                        false;
-
-
-                    currentAudio =
-                        null;
-
-
-                    stopBargeInDetection();
-
-
-                    setStatus(
-                        "Error",
-                        "⚠️ Could not play assistant audio."
-                    );
-
-                };
-
-
-                // =================================================
-                // PLAY AUDIO
-                // =================================================
-
-                await audio.play();
-
-
-                console.log(
-                    "▶️ Assistant audio playing."
+                addMessage(
+                    "🎤 Listening for your next question...",
+                    "system"
                 );
 
 
                 setStatus(
-                    "Speaking",
-                    "🔊 Speaking... You can interrupt me anytime."
+                    "Listening",
+                    "🎤 Speak naturally..."
                 );
 
 
-                // =================================================
-                // START BARGE-IN
-                // =================================================
+                startButton.disabled = true;
 
-                await startBargeInDetection();
+                stopButton.disabled = false;
 
-            }
+                isProcessing = true;
 
-            catch (error) {
+
+                await new Promise(
+                    resolve =>
+                        setTimeout(
+                            resolve,
+                            300
+                        )
+                );
+
+
+                if (
+                    stoppedByUser
+                ) {
+
+                    return;
+
+                }
+
+
+                // IMPORTANT:
+                // Start recording ONLY after TTS completely ends.
+
+                await startRecording();
+
+            };
+
+
+            // =================================================
+            // AUDIO ERROR
+            // =================================================
+
+            audio.onerror =
+                function(error) {
 
                 console.error(
                     "❌ Audio playback error:",
@@ -2495,21 +2734,55 @@ function connectWebSocket() {
                 );
 
 
-                isSpeaking =
-                    false;
-
-
-                currentAudio =
-                    null;
-
+                isSpeaking = false;
 
                 stopBargeInDetection();
 
 
                 setStatus(
                     "Error",
-                    "⚠️ Could not play assistant audio."
+                    "Could not play assistant audio."
                 );
+
+            };
+
+
+            // =================================================
+            // START BARGE-IN DETECTOR
+            // =================================================
+
+            console.log(
+                "🎤 Starting continuous barge-in detector..."
+            );
+
+
+            await startBargeInDetection();
+
+
+            // =================================================
+            // PLAY
+            // =================================================
+
+            try {
+
+                await audio.play();
+
+                console.log(
+                    "▶️ Assistant audio playing."
+                );
+
+            }
+
+            catch (error) {
+
+                console.error(
+                    "❌ Audio play error:",
+                    error
+                );
+
+                isSpeaking = false;
+
+                stopBargeInDetection();
 
             }
 
@@ -2538,12 +2811,13 @@ function connectWebSocket() {
         // ====================================================
 
         if (
-            message === "CONNECTED"
+            message ===
+            "CONNECTED"
         ) {
 
             setStatus(
                 "Connected",
-                "WebSocket connection established."
+                "WebSocket connected."
             );
 
         }
@@ -2554,22 +2828,20 @@ function connectWebSocket() {
         // ====================================================
 
         else if (
-            message === "READY"
+            message ===
+            "READY"
         ) {
 
-            isProcessing =
-                false;
-
-
             if (
-                !isSpeaking
+                !isSpeaking &&
+                !isRecording
             ) {
 
-                startButton.disabled =
-                    false;
+                isProcessing = false;
 
-                stopButton.disabled =
-                    true;
+                startButton.disabled = false;
+
+                stopButton.disabled = true;
 
 
                 setStatus(
@@ -2587,27 +2859,31 @@ function connectWebSocket() {
         // ====================================================
 
         else if (
-            message === "LISTENING"
+            message ===
+            "LISTENING"
         ) {
 
-            isProcessing =
-                true;
+            if (
+                !isSpeaking &&
+                !isRecording
+            ) {
+
+                isProcessing = true;
+
+                startButton.disabled = true;
+
+                stopButton.disabled = false;
 
 
-            startButton.disabled =
-                true;
-
-            stopButton.disabled =
-                false;
-
-
-            setStatus(
-                "Listening",
-                "🎤 Speak now... silence will stop recording."
-            );
+                setStatus(
+                    "Listening",
+                    "🎤 Speak now..."
+                );
 
 
-            await startRecording();
+                await startRecording();
+
+            }
 
         }
 
@@ -2617,18 +2893,15 @@ function connectWebSocket() {
         // ====================================================
 
         else if (
-            message === "PROCESSING"
+            message ===
+            "PROCESSING"
         ) {
 
-            isProcessing =
-                true;
+            isProcessing = true;
 
+            startButton.disabled = true;
 
-            startButton.disabled =
-                true;
-
-            stopButton.disabled =
-                true;
+            stopButton.disabled = true;
 
 
             setStatus(
@@ -2656,8 +2929,7 @@ function connectWebSocket() {
 
 
             addMessage(
-                "🎤 You: " +
-                text,
+                "🎤 You: " + text,
                 "user"
             );
 
@@ -2681,8 +2953,7 @@ function connectWebSocket() {
 
 
             addMessage(
-                "🤖 DesFlyer: " +
-                answer,
+                "🤖 DesFlyer: " + answer,
                 "assistant"
             );
 
@@ -2698,18 +2969,14 @@ function connectWebSocket() {
             "SPEAKING"
         ) {
 
-            isProcessing =
-                true;
+            isProcessing = true;
 
-            isSpeaking =
-                true;
+            isSpeaking = true;
 
 
-            startButton.disabled =
-                true;
+            startButton.disabled = true;
 
-            stopButton.disabled =
-                true;
+            stopButton.disabled = true;
 
 
             setStatus(
@@ -2730,7 +2997,7 @@ function connectWebSocket() {
         ) {
 
             console.log(
-                "✅ Backend received barge-in."
+                "✅ Backend received BARGE-IN."
             );
 
         }
@@ -2745,8 +3012,7 @@ function connectWebSocket() {
             "NO_SPEECH"
         ) {
 
-            isProcessing =
-                false;
+            isProcessing = false;
 
 
             if (
@@ -2754,17 +3020,15 @@ function connectWebSocket() {
                 !stoppedByUser
             ) {
 
+                startButton.disabled = false;
+
+                stopButton.disabled = true;
+
+
                 setStatus(
                     "Ready",
                     "⚠️ No speech detected. Try again."
                 );
-
-
-                startButton.disabled =
-                    false;
-
-                stopButton.disabled =
-                    true;
 
             }
 
@@ -2780,19 +3044,16 @@ function connectWebSocket() {
             "ERROR"
         ) {
 
-            isProcessing =
-                false;
+            isProcessing = false;
 
 
             if (
                 !isSpeaking
             ) {
 
-                startButton.disabled =
-                    false;
+                startButton.disabled = false;
 
-                stopButton.disabled =
-                    true;
+                stopButton.disabled = true;
 
 
                 setStatus(
@@ -2814,26 +3075,23 @@ function connectWebSocket() {
             "TTS_ERROR"
         ) {
 
-            isSpeaking =
-                false;
+            isSpeaking = false;
 
-            isProcessing =
-                false;
+            isProcessing = false;
+
 
             stopBargeInDetection();
+
+
+            startButton.disabled = false;
+
+            stopButton.disabled = true;
 
 
             setStatus(
                 "Error",
                 "⚠️ TTS audio could not be generated."
             );
-
-
-            startButton.disabled =
-                false;
-
-            stopButton.disabled =
-                true;
 
         }
 
@@ -2847,25 +3105,25 @@ function connectWebSocket() {
             "EXIT"
         ) {
 
-            stoppedByUser =
-                true;
+            stoppedByUser = true;
 
-            isProcessing =
-                false;
+            isProcessing = false;
+
+            isSpeaking = false;
 
 
             stopAssistantAudio();
 
-            stopRecording();
+            stopRecordingWithoutSending();
+
+            stopBargeInDetection();
 
             closeMicrophone();
 
 
-            startButton.disabled =
-                true;
+            startButton.disabled = true;
 
-            stopButton.disabled =
-                true;
+            stopButton.disabled = true;
 
 
             setStatus(
@@ -2891,28 +3149,30 @@ function connectWebSocket() {
         );
 
 
-        isProcessing =
-            false;
+        isProcessing = false;
+
+        isSpeaking = false;
 
 
         stopAssistantAudio();
 
-        stopRecording();
+        stopRecordingWithoutSending();
+
+        stopBargeInDetection();
+
+        closeMicrophone();
 
 
-        connectButton.disabled =
-            false;
+        connectButton.disabled = false;
 
-        startButton.disabled =
-            true;
+        startButton.disabled = true;
 
-        stopButton.disabled =
-            true;
+        stopButton.disabled = true;
 
 
         setStatus(
             "Error",
-            "❌ Could not connect to WebSocket."
+            "❌ WebSocket error."
         );
 
     };
@@ -2930,29 +3190,27 @@ function connectWebSocket() {
         );
 
 
-        stoppedByUser =
-            true;
+        stoppedByUser = true;
+
+        isProcessing = false;
+
+        isSpeaking = false;
 
 
         stopAssistantAudio();
 
-        stopRecording();
+        stopRecordingWithoutSending();
+
+        stopBargeInDetection();
 
         closeMicrophone();
 
 
-        isProcessing =
-            false;
+        connectButton.disabled = false;
 
+        startButton.disabled = true;
 
-        connectButton.disabled =
-            false;
-
-        startButton.disabled =
-            true;
-
-        stopButton.disabled =
-            true;
+        stopButton.disabled = true;
 
 
         setStatus(
@@ -2961,8 +3219,7 @@ function connectWebSocket() {
         );
 
 
-        socket =
-            null;
+        socket = null;
 
     };
 
@@ -2976,12 +3233,9 @@ function connectWebSocket() {
 async function startVoice() {
 
     if (
-
         !socket ||
-
         socket.readyState !==
         WebSocket.OPEN
-
     ) {
 
         setStatus(
@@ -3001,7 +3255,7 @@ async function startVoice() {
     ) {
 
         console.log(
-            "⚠️ Voice assistant is already active."
+            "⚠️ Assistant already active."
         );
 
         return;
@@ -3009,8 +3263,7 @@ async function startVoice() {
     }
 
 
-    stoppedByUser =
-        false;
+    stoppedByUser = false;
 
 
     try {
@@ -3083,7 +3336,7 @@ async function ensureMicrophone() {
 
 
     console.log(
-        "✅ Microphone stream ready."
+        "✅ Microphone ready."
     );
 
 }
@@ -3109,13 +3362,15 @@ async function startRecording() {
     ) {
 
         console.log(
-            "⚠️ Recording already active."
+            "⚠️ Recorder already running."
         );
 
         return;
 
     }
 
+
+    // NEVER record while assistant is speaking.
 
     if (
         isSpeaking
@@ -3140,16 +3395,11 @@ async function startRecording() {
 
         audioChunks = [];
 
-        speechDetected =
-            false;
+        speechDetected = false;
 
         recordingStartTime =
             Date.now();
 
-
-        // ====================================================
-        // MIME TYPE
-        // ====================================================
 
         let mimeType =
             "audio/webm;codecs=opus";
@@ -3167,10 +3417,6 @@ async function startRecording() {
         }
 
 
-        // ====================================================
-        // CREATE RECORDER
-        // ====================================================
-
         mediaRecorder =
             new MediaRecorder(
                 audioStream,
@@ -3181,19 +3427,12 @@ async function startRecording() {
             );
 
 
-        // ====================================================
-        // AUDIO DATA
-        // ====================================================
-
         mediaRecorder.ondataavailable =
             function(event) {
 
             if (
-
                 event.data &&
-
                 event.data.size > 0
-
             ) {
 
                 audioChunks.push(
@@ -3205,10 +3444,6 @@ async function startRecording() {
         };
 
 
-        // ====================================================
-        // STOP
-        // ====================================================
-
         mediaRecorder.onstop =
             async function() {
 
@@ -3217,8 +3452,7 @@ async function startRecording() {
             );
 
 
-            isRecording =
-                false;
+            isRecording = false;
 
 
             stopNormalSilenceDetection();
@@ -3245,18 +3479,10 @@ async function startRecording() {
                 audioBlob.size === 0
             ) {
 
-                console.warn(
-                    "⚠️ Empty audio."
-                );
-
-
                 if (
-
                     socket &&
-
                     socket.readyState ===
                     WebSocket.OPEN
-
                 ) {
 
                     socket.send(
@@ -3275,12 +3501,10 @@ async function startRecording() {
             // =================================================
 
             if (
-
                 socket &&
-
                 socket.readyState ===
-                WebSocket.OPEN
-
+                WebSocket.OPEN &&
+                !stoppedByUser
             ) {
 
                 try {
@@ -3308,7 +3532,7 @@ async function startRecording() {
                 catch (error) {
 
                     console.error(
-                        "❌ Audio sending error:",
+                        "❌ Audio send error:",
                         error
                     );
 
@@ -3319,27 +3543,22 @@ async function startRecording() {
         };
 
 
-        // ====================================================
-        // START
-        // ====================================================
-
         mediaRecorder.start(
             100
         );
 
 
-        isRecording =
-            true;
+        isRecording = true;
 
 
         console.log(
-            "🎙️ Browser recording started."
+            "🎙️ NEW RECORDING STARTED."
         );
 
 
         setStatus(
             "Listening",
-            "🎤 Speak now... waiting for silence."
+            "🎤 Speak now..."
         );
 
 
@@ -3355,13 +3574,12 @@ async function startRecording() {
         );
 
 
-        isRecording =
-            false;
+        isRecording = false;
 
 
         setStatus(
             "Error",
-            "❌ Could not start microphone recording."
+            "❌ Could not start recording."
         );
 
     }
@@ -3401,12 +3619,9 @@ async function startNormalSilenceDetection() {
             audioContext.createAnalyser();
 
 
-        analyser.fftSize =
-            2048;
+        analyser.fftSize = 2048;
 
-
-        analyser.smoothingTimeConstant =
-            0.8;
+        analyser.smoothingTimeConstant = 0.8;
 
 
         microphoneSource =
@@ -3455,8 +3670,7 @@ async function startNormalSilenceDetection() {
 
                 const normalized =
                     (
-                        dataArray[i] -
-                        128
+                        dataArray[i] - 128
                     ) / 128;
 
 
@@ -3474,17 +3688,12 @@ async function startNormalSilenceDetection() {
                 );
 
 
-            // =================================================
-            // SPEECH
-            // =================================================
-
             if (
                 rms >
                 SILENCE_THRESHOLD
             ) {
 
-                speechDetected =
-                    true;
+                speechDetected = true;
 
 
                 if (
@@ -3495,25 +3704,17 @@ async function startNormalSilenceDetection() {
                         silenceTimer
                     );
 
-                    silenceTimer =
-                        null;
+                    silenceTimer = null;
 
                 }
 
             }
 
-            // =================================================
-            // SILENCE
-            // =================================================
-
             else {
 
                 if (
-
                     speechDetected &&
-
                     !silenceTimer
-
                 ) {
 
                     silenceTimer =
@@ -3521,12 +3722,9 @@ async function startNormalSilenceDetection() {
                             function() {
 
                                 if (
-
                                     mediaRecorder &&
-
                                     mediaRecorder.state ===
                                     "recording"
-
                                 ) {
 
                                     console.log(
@@ -3547,18 +3745,11 @@ async function startNormalSilenceDetection() {
             }
 
 
-            // =================================================
-            // MAX TIME
-            // =================================================
-
             if (
-
                 recordingStartTime &&
-
                 Date.now() -
                 recordingStartTime >=
                 MAX_RECORDING_TIME
-
             ) {
 
                 console.log(
@@ -3611,8 +3802,7 @@ function stopNormalSilenceDetection() {
             silenceTimer
         );
 
-        silenceTimer =
-            null;
+        silenceTimer = null;
 
     }
 
@@ -3625,8 +3815,7 @@ function stopNormalSilenceDetection() {
             volumeCheckTimer
         );
 
-        volumeCheckTimer =
-            null;
+        volumeCheckTimer = null;
 
     }
 
@@ -3643,14 +3832,11 @@ function stopNormalSilenceDetection() {
 
         catch (error) {
 
-            console.warn(
-                error
-            );
+            console.warn(error);
 
         }
 
-        microphoneSource =
-            null;
+        microphoneSource = null;
 
     }
 
@@ -3661,32 +3847,35 @@ function stopNormalSilenceDetection() {
 
         try {
 
-            audioContext.close();
+            if (
+                audioContext.state !==
+                "closed"
+            ) {
+
+                audioContext.close();
+
+            }
 
         }
 
         catch (error) {
 
-            console.warn(
-                error
-            );
+            console.warn(error);
 
         }
 
-        audioContext =
-            null;
+        audioContext = null;
 
     }
 
 
-    analyser =
-        null;
+    analyser = null;
 
 }
 
 
 // ============================================================
-// STOP RECORDING
+// STOP RECORDING AND SEND AUDIO
 // ============================================================
 
 function stopRecording() {
@@ -3695,12 +3884,9 @@ function stopRecording() {
 
 
     if (
-
         mediaRecorder &&
-
         mediaRecorder.state !==
         "inactive"
-
     ) {
 
         try {
@@ -3720,12 +3906,52 @@ function stopRecording() {
 
     }
 
+}
 
-    mediaRecorder =
-        null;
 
-    isRecording =
-        false;
+// ============================================================
+// STOP RECORDING WITHOUT SENDING
+// ============================================================
+
+function stopRecordingWithoutSending() {
+
+    stopNormalSilenceDetection();
+
+
+    if (
+        mediaRecorder &&
+        mediaRecorder.state !==
+        "inactive"
+    ) {
+
+        try {
+
+            // Remove onstop handler so old recording
+            // cannot send stale audio.
+
+            mediaRecorder.onstop = null;
+
+            mediaRecorder.stop();
+
+        }
+
+        catch (error) {
+
+            console.warn(
+                "Recorder stop warning:",
+                error
+            );
+
+        }
+
+    }
+
+
+    mediaRecorder = null;
+
+    audioChunks = [];
+
+    isRecording = false;
 
 }
 
@@ -3736,27 +3962,34 @@ function stopRecording() {
 
 function closeMicrophone() {
 
-    stopRecording();
-
-    stopBargeInDetection();
+    stopRecordingWithoutSending();
 
 
     if (
         audioStream
     ) {
 
-        audioStream
-            .getTracks()
-            .forEach(
-                track =>
-                    track.stop()
-            );
+        try {
+
+            audioStream
+                .getTracks()
+                .forEach(
+                    track =>
+                        track.stop()
+                );
+
+        }
+
+        catch (error) {
+
+            console.warn(error);
+
+        }
 
     }
 
 
-    audioStream =
-        null;
+    audioStream = null;
 
 }
 
@@ -3772,26 +4005,32 @@ function stopVoice() {
     );
 
 
-    stoppedByUser =
-        true;
+    stoppedByUser = true;
+
+    isProcessing = false;
+
+    isSpeaking = false;
 
 
-    isProcessing =
-        false;
+    // ========================================================
+    // STOP EVERYTHING LOCALLY FIRST
+    // ========================================================
 
+    stopBargeInDetection();
+
+    stopRecordingWithoutSending();
 
     stopAssistantAudio();
 
-    closeMicrophone();
 
+    // ========================================================
+    // TELL BACKEND
+    // ========================================================
 
     if (
-
         socket &&
-
         socket.readyState ===
         WebSocket.OPEN
-
     ) {
 
         socket.send(
@@ -3801,11 +4040,9 @@ function stopVoice() {
     }
 
 
-    startButton.disabled =
-        false;
+    startButton.disabled = false;
 
-    stopButton.disabled =
-        true;
+    stopButton.disabled = true;
 
 
     setStatus(
@@ -3868,13 +4105,8 @@ if __name__ == "__main__":
 
 
     uvicorn.run(
-
         app,
-
         host="127.0.0.1",
-
         port=8000,
-
         reload=False
-
     )

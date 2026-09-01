@@ -46,9 +46,12 @@ def text_to_speech(text):
         # VOICE SETTINGS
         # ====================================================
 
+        # Slightly slower for a more natural
+        # conversational chatbot voice.
+
         engine.setProperty(
             "rate",
-            165
+            155
         )
 
         engine.setProperty(
@@ -57,19 +60,85 @@ def text_to_speech(text):
         )
 
         # ====================================================
-        # SELECT VOICE
+        # SELECT MICROSOFT ZIRA VOICE
         # ====================================================
 
         voices = engine.getProperty(
             "voices"
         )
 
+        selected_voice = None
+
         if voices:
 
-            engine.setProperty(
-                "voice",
-                voices[0].id
+            print(
+                "\n🎙️ Available voices:"
             )
+
+            for voice in voices:
+
+                print(
+                    "   -",
+                    voice.name
+                )
+
+                # ------------------------------------------------
+                # Select Microsoft Zira
+                # ------------------------------------------------
+
+                if "Zira" in voice.name:
+
+                    selected_voice = voice
+
+            # ====================================================
+            # APPLY ZIRA VOICE
+            # ====================================================
+
+            if selected_voice:
+
+                engine.setProperty(
+                    "voice",
+                    selected_voice.id
+                )
+
+                print(
+                    "\n⭐ Selected TTS Voice:"
+                )
+
+                print(
+                    "   Name:",
+                    selected_voice.name
+                )
+
+                print(
+                    "   Type: Microsoft Zira Desktop"
+                )
+
+            else:
+
+                # =================================================
+                # FALLBACK VOICE
+                # =================================================
+
+                print(
+                    "\n⚠️ Microsoft Zira was not found."
+                )
+
+                print(
+                    "⚠️ Using the first available voice."
+                )
+
+                if voices:
+
+                    engine.setProperty(
+                        "voice",
+                        voices[0].id
+                    )
+
+                    print(
+                        "   Fallback:",
+                        voices[0].name
+                    )
 
         # ====================================================
         # SAVE SPEECH TO WAV
@@ -134,8 +203,12 @@ def text_to_speech(text):
             error
         )
 
-        if output_file and os.path.exists(
+        if (
             output_file
+            and
+            os.path.exists(
+                output_file
+            )
         ):
 
             try:
@@ -174,21 +247,34 @@ if __name__ == "__main__":
     )
 
     print(
-        "🔊 TTS Test"
+        "🔊 DesFlyer TTS Test"
     )
 
     print(
         "==================================="
     )
 
+    test_text = (
+        "Hello, this is the DesFlyer voice assistant. "
+        "How can I help you today?"
+    )
+
     output = text_to_speech(
-        "Hello, this is the DesFlyer voice assistant."
+        test_text
     )
 
     if output:
 
         print(
-            "\n✅ TTS test successful."
+            "\n==================================="
+        )
+
+        print(
+            "✅ TTS test successful."
+        )
+
+        print(
+            "==================================="
         )
 
         print(
@@ -199,5 +285,13 @@ if __name__ == "__main__":
     else:
 
         print(
-            "\n❌ TTS test failed."
+            "\n==================================="
+        )
+
+        print(
+            "❌ TTS test failed."
+        )
+
+        print(
+            "==================================="
         )
