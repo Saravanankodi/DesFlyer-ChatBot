@@ -1,10 +1,68 @@
+import io
 import os
 import tempfile
-import pyttsx3
+
+from pocket_tts import TTSModel
+import scipy.io.wavfile
 
 
 # ============================================================
-# TEXT TO SPEECH
+# SELECTED VOICE
+# ============================================================
+
+SELECTED_VOICE = (
+    r"D:\voices_chatbot\Male\male_06_energetic.wav"
+)
+
+
+# ============================================================
+# LOAD POCKET TTS
+# ============================================================
+
+print("\n===================================")
+print("🔊 Loading Pocket TTS")
+print("===================================")
+
+tts_model = None
+voice_state = None
+
+try:
+
+    tts_model = TTSModel.load_model()
+
+    print("✅ Pocket TTS model loaded")
+
+    if not os.path.exists(SELECTED_VOICE):
+        raise FileNotFoundError(
+            f"Selected voice not found: {SELECTED_VOICE}"
+        )
+
+    print("\n🎙️ Selected voice:")
+    print("   ", SELECTED_VOICE)
+
+    voice_state = tts_model.get_state_for_audio_prompt(
+        SELECTED_VOICE
+    )
+
+    print("✅ Selected voice loaded successfully")
+
+    print(
+        f"🔊 Pocket TTS sample rate: {tts_model.sample_rate} Hz"
+    )
+
+except Exception as error:
+
+    print(
+        "❌ Pocket TTS initialization error:",
+        error
+    )
+
+    tts_model = None
+    voice_state = None
+
+
+# ============================================================
+# TEXT TO SPEECH - COMPLETE WAV
 # ============================================================
 
 def text_to_speech(text):
@@ -12,24 +70,39 @@ def text_to_speech(text):
     if not text or not text.strip():
 
         print("⚠️ Empty text received.")
-
         return None
 
     print("\n🔊 Generating TTS audio...")
 
-    engine = None
     output_file = None
 
     try:
 
         # ====================================================
+        # CHECK TTS
+        # ====================================================
+
+        if (
+            tts_model is None
+            or voice_state is None
+        ):
+
+            print(
+                "❌ Pocket TTS is not initialized."
+            )
+
+            return None
+
+        # ====================================================
         # CREATE TEMP WAV FILE
         # ====================================================
 
-        output_file = tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".wav"
-        ).name
+        output_file = (
+            tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".wav"
+            ).name
+        )
 
         print(
             "💾 TTS output:",
@@ -37,203 +110,148 @@ def text_to_speech(text):
         )
 
         # ====================================================
-        # INITIALIZE PYTTSX3
+        # GENERATE COMPLETE SPEECH
         # ====================================================
 
-        engine = pyttsx3.init()
-
-        # ====================================================
-        # VOICE SETTINGS
-        # ====================================================
-
-        # Slightly slower for a more natural
-        # conversational chatbot voice.
-
-        engine.setProperty(
-            "rate",
-            155
+        audio = tts_model.generate_audio(
+            voice_state,
+            text
         )
-
-        engine.setProperty(
-            "volume",
-            1.0
-        )
-
-        # ====================================================
-        # SELECT MICROSOFT ZIRA VOICE
-        # ====================================================
-
-        voices = engine.getProperty(
-            "voices"
-        )
-
-        selected_voice = None
-
-        if voices:
-
-            print(
-                "\n🎙️ Available voices:"
-            )
-
-            for voice in voices:
-
-                print(
-                    "   -",
-                    voice.name
-                )
-
-                # ------------------------------------------------
-                # Select Microsoft Zira
-                # ------------------------------------------------
-
-                if "Zira" in voice.name:
-
-                    selected_voice = voice
-
-            # ====================================================
-            # APPLY ZIRA VOICE
-            # ====================================================
-
-            if selected_voice:
-
-                engine.setProperty(
-                    "voice",
-                    selected_voice.id
-                )
-
-                print(
-                    "\n⭐ Selected TTS Voice:"
-                )
-
-                print(
-                    "   Name:",
-                    selected_voice.name
-                )
-
-                print(
-                    "   Type: Microsoft Zira Desktop"
-                )
-
-            else:
-
-                # =================================================
-                # FALLBACK VOICE
-                # =================================================
-
-                print(
-                    "\n⚠️ Microsoft Zira was not found."
-                )
-
-                print(
-                    "⚠️ Using the first available voice."
-                )
-
-                if voices:
-
-                    engine.setProperty(
-                        "voice",
-                        voices[0].id
-                    )
-
-                    print(
-                        "   Fallback:",
-                        voices[0].name
-                    )
 
         # ====================================================
         # SAVE SPEECH TO WAV
         # ====================================================
 
-        engine.save_to_file(
-            text,
-            output_file
+        scipy.io.wavfile.write(
+            output_file,
+            tts_model.sample_rate,
+            audio.numpy()
         )
-
-        engine.runAndWait()
-
-        # ====================================================
-        # STOP ENGINE
-        # ====================================================
-
-        engine.stop()
-
-        engine = None
 
         # ====================================================
         # VERIFY FILE
         # ====================================================
 
-        if not os.path.exists(
-            output_file
-        ):
+        if not os.path.exists(output_file):
 
-            print(
-                "❌ TTS file was not created."
-            )
+            print("❌ TTS file was not created.")
 
             return None
 
-        file_size = os.path.getsize(
-            output_file
-        )
+        file_size = os.path.getsize(output_file)
 
         if file_size == 0:
 
-            print(
-                "❌ TTS file is empty."
-            )
+            print("❌ TTS file is empty.")
 
-            os.remove(
-                output_file
-            )
+            os.remove(output_file)
 
             return None
 
         print(
-            f"✅ TTS audio created: "
-            f"{file_size} bytes"
+            f"✅ TTS audio created: {file_size} bytes"
         )
 
         return output_file
 
     except Exception as error:
 
-        print(
-            "❌ TTS error:",
-            error
-        )
+        print("❌ TTS error:", error)
 
         if (
             output_file
-            and
-            os.path.exists(
-                output_file
-            )
+            and os.path.exists(output_file)
         ):
 
             try:
-
-                os.remove(
-                    output_file
-                )
-
+                os.remove(output_file)
             except Exception:
-
                 pass
 
         return None
 
-    finally:
 
-        if engine is not None:
+# ============================================================
+# STREAMING TTS - RAW POCKET TTS STREAM → WAV BYTES
+# ============================================================
 
-            try:
+def generate_audio_stream(text):
 
-                engine.stop()
+    """
+    Generate Pocket TTS audio as soon as Pocket TTS produces
+    each decoded audio chunk.
 
-            except Exception:
+    Each yielded item is a small, valid WAV byte block so the
+    FastAPI WebSocket can send it immediately to the browser.
+    """
 
-                pass
+    if not text or not text.strip():
+
+        print("⚠️ Empty streaming TTS text received.")
+        return
+
+    if (
+        tts_model is None
+        or voice_state is None
+    ):
+
+        print("❌ Pocket TTS is not initialized.")
+        return
+
+    print("\n🔊 Pocket TTS streaming generation started...")
+
+    try:
+
+        audio_chunks = tts_model.generate_audio_stream(
+            model_state=voice_state,
+            text_to_generate=text,
+            copy_state=True
+        )
+
+        chunk_number = 0
+
+        for audio_chunk in audio_chunks:
+
+            if audio_chunk is None:
+                continue
+
+            chunk_number += 1
+
+            # Pocket TTS returns a 1-D tensor for streaming chunks.
+            # Convert each chunk into its own valid WAV container.
+            buffer = io.BytesIO()
+
+            scipy.io.wavfile.write(
+                buffer,
+                tts_model.sample_rate,
+                audio_chunk.numpy()
+            )
+
+            wav_bytes = buffer.getvalue()
+
+            if not wav_bytes:
+                continue
+
+            print(
+                f"🔊 Pocket TTS chunk {chunk_number}: "
+                f"{len(wav_bytes)} bytes"
+            )
+
+            yield wav_bytes
+
+        print(
+            f"✅ Pocket TTS streaming completed: "
+            f"{chunk_number} chunks"
+        )
+
+    except Exception as error:
+
+        print(
+            "❌ Pocket TTS streaming error:",
+            error
+        )
+
+        raise
 
 
 # ============================================================
@@ -242,56 +260,26 @@ def text_to_speech(text):
 
 if __name__ == "__main__":
 
-    print(
-        "\n==================================="
-    )
-
-    print(
-        "🔊 DesFlyer TTS Test"
-    )
-
-    print(
-        "==================================="
-    )
+    print("\n===================================")
+    print("🔊 DesFlyer TTS Test")
+    print("===================================")
 
     test_text = (
         "Hello, this is the DesFlyer voice assistant. "
         "How can I help you today?"
     )
 
-    output = text_to_speech(
-        test_text
-    )
+    output = text_to_speech(test_text)
 
     if output:
 
-        print(
-            "\n==================================="
-        )
-
-        print(
-            "✅ TTS test successful."
-        )
-
-        print(
-            "==================================="
-        )
-
-        print(
-            "WAV file:",
-            output
-        )
+        print("\n===================================")
+        print("✅ TTS test successful.")
+        print("===================================")
+        print("WAV file:", output)
 
     else:
 
-        print(
-            "\n==================================="
-        )
-
-        print(
-            "❌ TTS test failed."
-        )
-
-        print(
-            "==================================="
-        )
+        print("\n===================================")
+        print("❌ TTS test failed.")
+        print("===================================")
