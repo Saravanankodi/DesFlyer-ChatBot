@@ -50,126 +50,6 @@ def home():
         }
     }
 # ============================================================
-# TASK 15 - CLOSING QUESTION
-# ============================================================
-
-def add_closing_question(user_question, answer):
-
-    question = user_question.lower().strip()
-
-    # --------------------------------------------------------
-    # Website related
-    # --------------------------------------------------------
-
-    if any(
-        word in question
-        for word in [
-            "website",
-            "web development",
-            "web application",
-            "web app"
-        ]
-    ):
-
-        closing_question = (
-            "Would you like to know more about "
-            "our website development services?"
-        )
-
-    # --------------------------------------------------------
-    # Mobile application related
-    # --------------------------------------------------------
-
-    elif any(
-        word in question
-        for word in [
-            "mobile",
-            "mobile app",
-            "mobile application",
-            "android",
-            "ios"
-        ]
-    ):
-
-        closing_question = (
-            "Would you like to know more about "
-            "our mobile application development services?"
-        )
-
-    # --------------------------------------------------------
-    # Service related
-    # --------------------------------------------------------
-
-    elif any(
-        word in question
-        for word in [
-            "service",
-            "services",
-            "offer",
-            "provide",
-            "what do you do"
-        ]
-    ):
-
-        closing_question = (
-            "Would you like to know more about "
-            "any of our services?"
-        )
-
-    # --------------------------------------------------------
-    # Company related
-    # --------------------------------------------------------
-
-    elif any(
-        word in question
-        for word in [
-            "desflyer",
-            "company",
-            "about you",
-            "about the company"
-        ]
-    ):
-
-        closing_question = (
-            "Would you like to know more about DesFlyer?"
-        )
-
-    # --------------------------------------------------------
-    # Location related
-    # --------------------------------------------------------
-
-    elif any(
-        word in question
-        for word in [
-            "location",
-            "located",
-            "office",
-            "where"
-        ]
-    ):
-
-        closing_question = (
-            "Would you like to know more about DesFlyer?"
-        )
-
-    # --------------------------------------------------------
-    # General fallback
-    # --------------------------------------------------------
-
-    else:
-
-        closing_question = (
-            "Is there anything else you would like "
-            "to know about DesFlyer?"
-        )
-
-    return (
-        answer.rstrip()
-        + " "
-        + closing_question
-    )
-
-# ============================================================
 # NORMAL CHAT
 # ============================================================
 
@@ -237,6 +117,111 @@ def chat_stream(data: Question):
 
 
 # ============================================================
+# BACKGROUND TTS WORKER
+# ============================================================
+
+async def generate_and_send_tts(websocket, answer):
+
+    print("\n🔊 Background TTS started...")
+
+    tts_start = time.time()
+    audio_output = None
+
+    try:
+
+        audio_output = await asyncio.to_thread(
+            text_to_speech,
+            answer
+        )
+
+        tts_time = time.time() - tts_start
+
+        print(
+            f"⏱️ TTS generation time: "
+            f"{tts_time:.2f} seconds"
+        )
+
+        if (
+            audio_output
+            and
+            os.path.exists(audio_output)
+        ):
+
+            with open(
+                audio_output,
+                "rb"
+            ) as audio_file:
+
+                wav_data = audio_file.read()
+
+            print(
+                f"🔊 Sending WAV: "
+                f"{len(wav_data)} bytes"
+            )
+
+            await websocket.send_bytes(
+                wav_data
+            )
+
+            print(
+                "✅ Audio sent to browser."
+            )
+
+        else:
+
+            print(
+                "⚠️ TTS did not create audio."
+            )
+
+            await websocket.send_text(
+                "TTS_ERROR"
+            )
+
+    except asyncio.CancelledError:
+
+        print(
+            "🛑 Background TTS cancelled."
+        )
+
+        raise
+
+    except Exception as error:
+
+        print(
+            "❌ TTS error:",
+            error
+        )
+
+        try:
+
+            await websocket.send_text(
+                "TTS_ERROR"
+            )
+
+        except Exception:
+
+            pass
+
+    finally:
+
+        try:
+
+            if (
+                audio_output
+                and
+                os.path.exists(audio_output)
+            ):
+
+                os.remove(
+                    audio_output
+                )
+
+        except Exception:
+
+            pass
+
+
+# ============================================================
 # WEBSOCKET VOICE
 # ============================================================
 
@@ -260,6 +245,8 @@ async def websocket_voice(websocket: WebSocket):
     waiting_for_barge_audio = False
 
     stopped = False
+
+    tts_task = None
 
     try:
 
@@ -420,6 +407,12 @@ async def websocket_voice(websocket: WebSocket):
                     # interrupted speech audio.
                     # -------------------------------------------------
 
+                    if tts_task and not tts_task.done():
+
+                        tts_task.cancel()
+
+                    tts_task = None
+
                     assistant_speaking = False
 
                     processing = True
@@ -454,6 +447,12 @@ async def websocket_voice(websocket: WebSocket):
                     )
 
                     stopped = True
+
+                    if tts_task and not tts_task.done():
+
+                        tts_task.cancel()
+
+                    tts_task = None
 
                     processing = False
 
@@ -782,23 +781,16 @@ async def websocket_voice(websocket: WebSocket):
                     f"{rag_time:.2f} seconds"
                 )
                 # =================================================
-                #  ADD CLOSING QUESTION
+                # FINAL ANSWER FROM RAG
                 # =================================================
+                # rag.py already adds exactly ONE relevant closing
+                # question. Do not add another question here.
 
-                answer = add_closing_question(
-                    user_text,
+                print(
+                    "\n🤖 Final DesFlyer response:",
                     answer
                 )
 
-                print(
-                    "\n💬 Closing question added."
-                )
-
-                print(
-                    "🤖 Final DesFlyer response:",
-                    answer
-                )
-                
 
                 # =================================================
                 # EMPTY ANSWER
@@ -841,124 +833,37 @@ async def websocket_voice(websocket: WebSocket):
 
                 assistant_speaking = True
 
-                processing = False
+                processing = True
 
                 print(
                     "\n🔊 STATE: SPEAKING"
                 )
 
-                tts_start = time.time()
+                # Send the answer to the browser first.
+                # Yield once so the UI can render the text before
+                # the CPU-heavy TTS generation starts.
+                await asyncio.sleep(0)
 
-                audio_output = None
+                # Generate TTS in the background so the WebSocket
+                # remains free to receive barge-in/stop commands.
+                if tts_task and not tts_task.done():
 
-                try:
+                    tts_task.cancel()
 
-                    audio_output = await asyncio.to_thread(
-                        text_to_speech,
+                tts_task = asyncio.create_task(
+                    generate_and_send_tts(
+                        websocket,
                         answer
                     )
-
-                except Exception as error:
-
-                    print(
-                        "❌ TTS error:",
-                        error
-                    )
-
-                tts_time = (
-                    time.time()
-                    - tts_start
-                )
-
-                print(
-                    f"⏱️ TTS time: "
-                    f"{tts_time:.2f} seconds"
                 )
 
                 # =================================================
-                # SEND TTS AUDIO
+                # TTS AUDIO IS SENT BY THE BACKGROUND TASK
                 # =================================================
 
-                if (
-                    audio_output
-                    and
-                    os.path.exists(audio_output)
-                ):
-
-                    try:
-
-                        with open(
-                            audio_output,
-                            "rb"
-                        ) as audio_file:
-
-                            wav_data = audio_file.read()
-
-                        print(
-                            f"🔊 Sending WAV: "
-                            f"{len(wav_data)} bytes"
-                        )
-
-                        await websocket.send_bytes(
-                            wav_data
-                        )
-
-                        print(
-                            "✅ Audio sent to browser."
-                        )
-
-                    except Exception as error:
-
-                        print(
-                            "❌ Could not send audio:",
-                            error
-                        )
-
-                        assistant_speaking = False
-
-                        await websocket.send_text(
-                            "TTS_ERROR"
-                        )
-
-                    finally:
-
-                        try:
-
-                            if os.path.exists(
-                                audio_output
-                            ):
-
-                                os.remove(
-                                    audio_output
-                                )
-
-                        except Exception:
-
-                            pass
-
-                else:
-
-                    print(
-                        "⚠️ TTS did not create audio."
-                    )
-
-                    assistant_speaking = False
-
-                    await websocket.send_text(
-                        "TTS_ERROR"
-                    )
-
-                print(
-                    "\n⏳ Waiting for browser:"
-                )
-
-                print(
-                    "   • TTS completion"
-                )
-
-                print(
-                    "   • barge-in"
-                )
+                # Do not wait here. The WebSocket must remain active
+                # so the browser can display the answer immediately
+                # and send barge-in/stop commands while TTS runs.
 
             # ====================================================
             # UNKNOWN MESSAGE
@@ -984,6 +889,10 @@ async def websocket_voice(websocket: WebSocket):
         )
 
     finally:
+
+        if tts_task and not tts_task.done():
+
+            tts_task.cancel()
 
         processing = False
 
@@ -1507,6 +1416,19 @@ let stoppedByUser = false;
 let currentAudio = null;
 
 let currentAudioUrl = null;
+
+// Hold the answer text until assistant audio arrives.
+// This keeps answer display and AI speech synchronized.
+let pendingAnswer = null;
+
+// ============================================================
+// PLAYBACK AUDIO ENHANCEMENT
+// ============================================================
+
+let playbackAudioContext = null;
+let playbackGainNode = null;
+let playbackCompressor = null;
+let currentPlaybackSource = null;
 
 
 // ============================================================
@@ -2600,19 +2522,102 @@ function connectWebSocket() {
 
 
             // =================================================
+            // SHOW ANSWER WHEN AUDIO IS READY
+            // =================================================
+
+            if (
+                pendingAnswer !== null
+            ) {
+
+                addMessage(
+                    "🤖 DesFlyer: " + pendingAnswer,
+                    "assistant"
+                );
+
+                pendingAnswer = null;
+
+            }
+
+
+            // =================================================
+            // PLAYBACK VOLUME / CLARITY
+            // =================================================
+
+            audio.volume = 1.0;
+
+            try {
+
+                if (!playbackAudioContext) {
+
+                    playbackAudioContext =
+                        new (
+                            window.AudioContext ||
+                            window.webkitAudioContext
+                        )();
+
+                }
+
+                if (
+                    playbackAudioContext.state ===
+                    "suspended"
+                ) {
+
+                    await playbackAudioContext.resume();
+
+                }
+
+                currentPlaybackSource =
+                    playbackAudioContext.createMediaElementSource(
+                        audio
+                    );
+
+                playbackGainNode =
+                    playbackAudioContext.createGain();
+
+                playbackCompressor =
+                    playbackAudioContext.createDynamicsCompressor();
+
+                // Increase voice loudness without changing the WAV file.
+                playbackGainNode.gain.value = 2.0;
+
+                // Keep the louder voice clearer and reduce harsh peaks.
+                playbackCompressor.threshold.value = -18;
+                playbackCompressor.knee.value = 12;
+                playbackCompressor.ratio.value = 3;
+                playbackCompressor.attack.value = 0.003;
+                playbackCompressor.release.value = 0.25;
+
+                currentPlaybackSource.connect(
+                    playbackGainNode
+                );
+
+                playbackGainNode.connect(
+                    playbackCompressor
+                );
+
+                playbackCompressor.connect(
+                    playbackAudioContext.destination
+                );
+
+            }
+
+            catch (error) {
+
+                console.warn(
+                    "Playback enhancement warning:",
+                    error
+                );
+
+            }
+
+
+            // =================================================
             // SPEAKING STATE
             // =================================================
 
             isSpeaking = true;
 
             isProcessing = false;
-
-
-            setStatus(
-                "Speaking",
-                "🔊 Speaking... You can interrupt me."
-            );
-
 
             startButton.disabled = true;
 
@@ -2748,18 +2753,6 @@ function connectWebSocket() {
 
 
             // =================================================
-            // START BARGE-IN DETECTOR
-            // =================================================
-
-            console.log(
-                "🎤 Starting continuous barge-in detector..."
-            );
-
-
-            await startBargeInDetection();
-
-
-            // =================================================
             // PLAY
             // =================================================
 
@@ -2767,9 +2760,22 @@ function connectWebSocket() {
 
                 await audio.play();
 
+                // Show Speaking exactly when browser playback starts.
+                setStatus(
+                    "Speaking",
+                    "🔊 Speaking... You can interrupt me."
+                );
+
                 console.log(
                     "▶️ Assistant audio playing."
                 );
+
+                // Start barge-in detection after playback has started.
+                console.log(
+                    "🎤 Starting continuous barge-in detector..."
+                );
+
+                await startBargeInDetection();
 
             }
 
@@ -2951,37 +2957,12 @@ function connectWebSocket() {
                     7
                 );
 
+            // Store the answer.
+            // It is displayed when the audio arrives.
+            pendingAnswer = answer;
 
-            addMessage(
-                "🤖 DesFlyer: " + answer,
-                "assistant"
-            );
-
-        }
-
-
-        // ====================================================
-        // SPEAKING
-        // ====================================================
-
-        else if (
-            message ===
-            "SPEAKING"
-        ) {
-
-            isProcessing = true;
-
-            isSpeaking = true;
-
-
-            startButton.disabled = true;
-
-            stopButton.disabled = true;
-
-
-            setStatus(
-                "Speaking",
-                "🔊 Preparing response..."
+            console.log(
+                "📝 Answer received. Waiting for audio."
             );
 
         }
@@ -3074,6 +3055,20 @@ function connectWebSocket() {
             message ===
             "TTS_ERROR"
         ) {
+
+            // If TTS fails, still show the answer text.
+            if (
+                pendingAnswer !== null
+            ) {
+
+                addMessage(
+                    "🤖 DesFlyer: " + pendingAnswer,
+                    "assistant"
+                );
+
+                pendingAnswer = null;
+
+            }
 
             isSpeaking = false;
 
@@ -3289,9 +3284,29 @@ async function startVoice() {
     }
 
 
+    // Show LISTENING immediately on the browser.
+    // Do not wait for the WebSocket LISTENING message.
+    isProcessing = true;
+
+    startButton.disabled = true;
+    stopButton.disabled = false;
+
+    setStatus(
+        "Listening",
+        "🎤 Speak now..."
+    );
+
+    console.log(
+        "🎤 UI STATE: LISTENING"
+    );
+
+    // Tell the backend to enter listening mode.
     socket.send(
         "start"
     );
+
+    // Start browser recording immediately after sending the command.
+    await startRecording();
 
 }
 
@@ -4084,29 +4099,29 @@ if __name__ == "__main__":
     )
 
     print(
-        "👉 http://127.0.0.1:8000/voice"
-    )
-
-    print(
-        "\n🔌 WebSocket:"
-    )
-
-    print(
-        "👉 ws://127.0.0.1:8000/ws/voice"
-    )
-
-    print(
-        "\n🚀 Starting Uvicorn..."
-    )
-
-    print(
-        "====================================\n"
-    )
-
-
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=8000,
-        reload=False
+        "👉 http://127.0.0.1:8000/voice" 
+    ) 
+ 
+    print( 
+        "\n🔌 WebSocket:" 
+    ) 
+ 
+    print( 
+        "👉 ws://127.0.0.1:8000/ws/voice" 
+    ) 
+ 
+    print( 
+        "\n🚀 Starting Uvicorn..." 
+    ) 
+ 
+    print( 
+        "====================================\n" 
+    ) 
+ 
+ 
+    uvicorn.run( 
+        app, 
+        host="127.0.0.1", 
+        port=8000, 
+        reload=False 
     )
